@@ -14,10 +14,12 @@ of een geïsoleerd VLAN), niet voor productienetwerken.
 """
 
 import os
+import re
 import struct
 import sys
 import threading
 import time
+import zlib
 
 from PyQt6.QtCore import Qt, pyqtSignal, QObject, QRectF
 from PyQt6.QtGui import QPainter, QColor, QPen, QFont
@@ -122,6 +124,42 @@ def ontleed_payload(raw: bytes):
     werkelijke_payload = inhoud[:opgegeven_lengte]
     padding_lengte = len(inhoud) - opgegeven_lengte
     return werkelijke_payload, padding_lengte
+
+
+# Standaard Ethernet-preamble: 7 bytes afwisselend patroon (0xAA) gevolgd
+# door de Start Frame Delimiter (0xAB). Dit is altijd hetzelfde patroon,
+# ongeacht de framegrootte.
+PREAMBLE_BYTES = bytes([0xAA] * 7 + [0xAB])
+
+
+def mac_naar_bytes(mac_tekst):
+    """
+    Zet een (mogelijk nog onvolledig ingetypt) MAC-adres om in 6 bytes,
+    zodat de live visualisatie ook tijdens het typen een FCS kan
+    voorrekenen. Ontbrekende of ongeldige octetten worden als 0x00
+    behandeld.
+    """
+    delen = re.split(r"[:\-]", mac_tekst.strip()) if mac_tekst else []
+    octetten = []
+    for i in range(6):
+        try:
+            octetten.append(int(delen[i], 16) & 0xFF)
+        except (IndexError, ValueError):
+            octetten.append(0)
+    return bytes(octetten)
+
+
+def bereken_dummy_fcs(dst_mac, src_mac, ethertype, data_bytes):
+    """
+    Berekent een illustratieve FCS (CRC-32) over de frame-inhoud, zodat
+    de weergave verandert zodra de gebruiker iets aan het frame
+    aanpast — net zoals een echte FCS afhankelijk is van de
+    frame-inhoud. Dit is een educatieve benadering ter illustratie, geen
+    exacte reproductie van de FCS zoals die op de kabel wordt verzonden.
+    """
+    inhoud = mac_naar_bytes(dst_mac) + mac_naar_bytes(src_mac) + struct.pack("!H", ethertype) + data_bytes
+    checksum = zlib.crc32(inhoud) & 0xFFFFFFFF
+    return checksum.to_bytes(4, "big")
 
 
 def get_readable_interfaces():
@@ -240,28 +278,32 @@ class FrameVisualisatieWidget(QWidget):
     aanwezig of zichtbaar.
     """
 
-    VELDEN_BUITEN_APP = {"PREAMBLE", "FCS"}
+    VELDEN_BUITEN_APP = {"Preamble", "FCS"}
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumHeight(120)
+        self.setMinimumHeight(130)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._velden = []
 
-    def toon_frame(self, dst_mac, src_mac, ethertype_hex, tekst_bytes, padding_bytes):
-        lengteveld_bytes = 2
-        data_waarde = f"{tekst_bytes} B tekst + {lengteveld_bytes} B lengteveld"
-        if padding_bytes:
-            data_waarde += f" + {padding_bytes} B padding"
-        data_lengte = max(tekst_bytes + lengteveld_bytes + padding_bytes, MIN_DATA_BYTES)
+    def toon_frame(self, dst_mac, src_mac, ethertype_hex, ethertype_int, payload_tekst, data_bytes):
+        """
+        dst_mac/src_mac: ingevoerde MAC-adressen (tekst).
+        ethertype_hex/ethertype_int: EtherType als hex-tekst resp. int.
+        payload_tekst: de door de gebruiker ingetypte payloadtekst.
+        data_bytes: de volledige, al aangevulde inhoud van het Data-veld
+            zoals die daadwerkelijk verstuurd zou worden (lengteveld +
+            tekst + eventuele padding).
+        """
+        fcs_bytes = bereken_dummy_fcs(dst_mac, src_mac, ethertype_int, data_bytes)
 
         self._velden = [
-            ("PREAMBLE", 8, "(door netwerkkaart)"),
-            ("DESTINATION\nADDRESS", 6, dst_mac),
-            ("SOURCE\nADDRESS", 6, src_mac),
-            ("TYPE", 2, ethertype_hex),
-            ("DATA", data_lengte, data_waarde),
-            ("FCS", 4, "(door netwerkkaart)"),
+            ("Preamble", len(PREAMBLE_BYTES), PREAMBLE_BYTES.hex(" ").upper()),
+            ("Destination address", 6, (dst_mac or "-").upper()),
+            ("Source address", 6, (src_mac or "-").upper()),
+            ("Type", 2, ethertype_hex),
+            ("Data", len(data_bytes), payload_tekst if payload_tekst else "(leeg)"),
+            ("FCS", len(fcs_bytes), fcs_bytes.hex(" ").upper()),
         ]
         self.update()
 
@@ -313,25 +355,32 @@ class FrameVisualisatieWidget(QWidget):
             painter.setBrush(vulkleur)
             painter.drawRect(rect)
 
-            # veldnaam
-            font_naam = QFont(basis_font)
-            font_naam.setPointSize(8)
-            font_naam.setBold(True)
-            painter.setFont(font_naam)
-            painter.setPen(QColor("#444444") if is_buiten_app else QColor("#0b2e52"))
-            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, naam)
-
-            # werkelijke waarde onder de box
+            # werkelijke waarde, in het vet, IN de box
+            painter.save()
+            painter.setClipRect(rect)
             font_waarde = QFont(basis_font)
-            font_waarde.setPointSize(7)
-            font_waarde.setItalic(True)
+            font_waarde.setPointSize(8)
+            font_waarde.setBold(True)
             painter.setFont(font_waarde)
-            painter.setPen(QColor("#333333"))
-            waarde_rect = QRectF(x, top + hoogte_box + 2, breedte, onder_ruimte - 2)
+            painter.setPen(QColor("#444444") if is_buiten_app else QColor("#0b2e52"))
             painter.drawText(
-                waarde_rect,
-                int(Qt.AlignmentFlag.AlignHCenter) | int(Qt.AlignmentFlag.AlignTop) | int(Qt.TextFlag.TextWordWrap),
+                rect,
+                int(Qt.AlignmentFlag.AlignCenter) | int(Qt.TextFlag.TextWordWrap),
                 str(waarde),
+            )
+            painter.restore()
+
+            # veldnaam, klein, ONDER de box
+            font_naam = QFont(basis_font)
+            font_naam.setPointSize(7)
+            font_naam.setItalic(True)
+            painter.setFont(font_naam)
+            painter.setPen(QColor("#333333"))
+            naam_rect = QRectF(x, top + hoogte_box + 2, breedte, onder_ruimte - 2)
+            painter.drawText(
+                naam_rect,
+                int(Qt.AlignmentFlag.AlignHCenter) | int(Qt.AlignmentFlag.AlignTop) | int(Qt.TextFlag.TextWordWrap),
+                naam,
             )
 
             x += breedte
@@ -418,8 +467,9 @@ class HoofdVenster(QMainWindow):
         self.frame_visualisatie = FrameVisualisatieWidget()
         visualisatie_layout.addWidget(self.frame_visualisatie)
         visualisatie_uitleg = QLabel(
-            "Preamble en FCS (grijs) worden ter illustratie getoond, maar "
-            "door de netwerkkaart toegevoegd/gecontroleerd — deze "
+            "Preamble en FCS (grijs) tonen illustratieve waarden — in "
+            "werkelijkheid worden die door de netwerkkaart toegevoegd "
+            "(Preamble) resp. berekend en gecontroleerd (FCS). Deze "
             "applicatie bouwt en verstuurt zelf alleen Destination MAC "
             "t/m Data."
         )
@@ -514,20 +564,21 @@ class HoofdVenster(QMainWindow):
         self.dst_mac_edit.setText(BROADCAST_MAC)
 
     def _bijwerken_visualisatie(self):
-        dst_mac = self.dst_mac_edit.text().strip() or "(nog niet ingevuld)"
-        src_mac = self.src_mac_edit.text().strip() or "(nog niet ingevuld)"
+        dst_mac = self.dst_mac_edit.text().strip()
+        src_mac = self.src_mac_edit.text().strip()
         payload_tekst = self.payload_edit.text()
 
-        tekst_bytes = len(payload_tekst.encode("utf-8"))
-        lengteveld_bytes = 2
-        padding_bytes = max(0, MIN_DATA_BYTES - lengteveld_bytes - tekst_bytes)
+        data_bytes = bouw_payload_bytes(payload_tekst)
+        if len(data_bytes) < MIN_DATA_BYTES:
+            data_bytes += b"\x00" * (MIN_DATA_BYTES - len(data_bytes))
 
         self.frame_visualisatie.toon_frame(
             dst_mac=dst_mac,
             src_mac=src_mac,
             ethertype_hex=f"0x{DEFAULT_ETHERTYPE:04X}",
-            tekst_bytes=tekst_bytes,
-            padding_bytes=padding_bytes,
+            ethertype_int=DEFAULT_ETHERTYPE,
+            payload_tekst=payload_tekst,
+            data_bytes=data_bytes,
         )
 
     def _verstuur_frame(self):

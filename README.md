@@ -31,10 +31,15 @@ zien hoe Ethernet framing, MAC-adressering en EtherType werken.
   framegrootte, en de payload als zowel tekst als hexadecimale bytes.
 - Live visuele weergave van het op te bouwen Ethernet frame (Preamble,
   Destination/Source MAC, Type, Data, FCS) die meebeweegt terwijl je de
-  velden invult, zodat direct zichtbaar is hoe de ingevoerde waarden zich
-  verhouden tot de framestructuur. Preamble en FCS zijn grijs gemarkeerd
-  ter illustratie: die worden in werkelijkheid door de netwerkkaart
-  toegevoegd/gecontroleerd en niet door deze applicatie zelf.
+  velden invult. Elk veld toont de daadwerkelijke waarde in het vet
+  (bijv. de ingetypte destination MAC of payloadtekst), met de veldnaam
+  er klein onder — zo is in één oogopslag te zien wat er verstuurd wordt
+  én hoe dat in de framestructuur past. Preamble en FCS zijn grijs
+  gemarkeerd ter illustratie (in werkelijkheid door de netwerkkaart
+  toegevoegd resp. berekend, niet door deze applicatie): Preamble toont
+  het standaard bitpatroon, en de getoonde FCS is een illustratieve
+  CRC-32-checksum over de huidige frame-inhoud die dus verandert zodra
+  je iets aanpast — precies zoals een echte FCS.
 - De payload wordt bij verzending voorafgegaan door een 2-byte lengteveld,
   zodat de ontvanger altijd exact de ingetypte tekst kan tonen. Ethernet
   vult frames die korter zijn dan de minimale framegrootte (60 bytes
