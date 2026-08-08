@@ -324,7 +324,7 @@ class FrameVisualisatieWidget(QWidget):
         # velden krijgen een minimumbreedte zodat de tekst leesbaar
         # blijft, grote velden (Data) worden begrensd zodat ze de rest
         # niet volledig wegdrukken.
-        gewichten = [max(6, min(lengte, 60)) for _, lengte, _ in self._velden]
+        gewichten = [max(6, min(lengte, 30)) for _, lengte, _ in self._velden]
         totaal_gewicht = sum(gewichten)
 
         basis_font = QFont(self.font().family())
