@@ -53,6 +53,16 @@ zien hoe Ethernet framing, MAC-adressering en EtherType werken.
   niets is ontvangen, toont de visualisatie geen frame-inhoud (dus ook
   geen nagemaakte Preamble/Type/FCS) — pas na het eerste ontvangen
   frame worden de velden echt ingevuld.
+- **Eigen verzonden frames worden niet in de sniffer getoond.** Een
+  lokale raw-socket capture (zoals Scapy/tcpdump gebruikt) vangt op
+  Linux normaal gesproken zowel inkomend als zelf verzonden verkeer af
+  op dezelfde interface — dat gebeurt in de kernel, niet omdat een
+  switch het frame terugstuurt (een switch stuurt een frame nooit terug
+  de poort op waar het vandaan kwam, ook niet bij een broadcast). Om de
+  sniffer realistisch te houden — zodat hij toont wat een *andere*
+  computer op het netwerk zou zien — filtert de applicatie frames eruit
+  waarvan het source MAC-adres overeenkomt met dat van de eigen
+  interface.
 - **Geschiedenislijst van ontvangen frames**: elk ontvangen frame met
   EtherType `0x88B5` verschijnt in een lijst; door een frame in die lijst
   aan te klikken wordt de visualisatie bijgewerkt met de inhoud van dát

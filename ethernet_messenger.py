@@ -218,6 +218,17 @@ class SnifferThread(threading.Thread):
         self.iface = iface
         self.signals = signals
         self._stop_event = threading.Event()
+        # Lokale raw-socket capture (Scapy/libpcap) vangt op Linux zowel
+        # inkomend áls zelf verzonden verkeer op dezelfde interface af —
+        # dat gebeurt in de kernel, niet doordat een switch het frame
+        # terugstuurt (dat doet een switch nooit naar de poort waar het
+        # vandaan kwam). Om de sniffer realistisch te houden ("wat zou
+        # een ándere computer op het netwerk zien") worden eigen
+        # verzonden frames er hieronder uitgefilterd.
+        try:
+            self.eigen_mac = get_if_hwaddr(iface)
+        except Exception:
+            self.eigen_mac = None
 
     def run(self):
         try:
@@ -244,6 +255,8 @@ class SnifferThread(threading.Thread):
         eth = pkt[Ether]
         if eth.type != DEFAULT_ETHERTYPE:
             return  # extra vangnet naast het BPF-filter
+        if self.eigen_mac and eth.src.lower() == self.eigen_mac.lower():
+            return  # eigen uitgaand frame, geen "echt" ontvangen verkeer
 
         raw_payload = bytes(eth.payload)
         werkelijke_payload, _ = ontleed_payload(raw_payload)
