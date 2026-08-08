@@ -79,20 +79,6 @@ def is_physical_interface(iface_name):
     return os.path.exists(f"/sys/class/net/{iface_name}/device")
 
 
-def classify_mac(mac):
-    """Classificeert een MAC-adres als broadcast, multicast of unicast."""
-    if mac.lower() == BROADCAST_MAC:
-        return "broadcast"
-    try:
-        eerste_octet = int(mac.split(":")[0], 16)
-    except (ValueError, IndexError):
-        return "onbekend"
-    # I/G-bit (bit 0 van het eerste octet): 1 = multicast, 0 = unicast
-    if eerste_octet & 0x01:
-        return "multicast"
-    return "unicast"
-
-
 def bouw_payload_bytes(tekst):
     """
     Zet de ingetypte payloadtekst om in bytes, voorafgegaan door een
@@ -189,7 +175,7 @@ def get_readable_interfaces():
 
 
 class SnifferSignals(QObject):
-    frame_ontvangen = pyqtSignal(str)
+    frame_ontvangen = pyqtSignal(object)
     fout = pyqtSignal(str)
 
 
@@ -228,38 +214,26 @@ class SnifferThread(threading.Thread):
         if eth.type != DEFAULT_ETHERTYPE:
             return  # extra vangnet naast het BPF-filter
 
-        tijd = time.strftime("%H:%M:%S")
-        lengte = len(pkt)
         raw_payload = bytes(eth.payload)
-        werkelijke_payload, padding_lengte = ontleed_payload(raw_payload)
+        werkelijke_payload, _ = ontleed_payload(raw_payload)
         try:
             payload_str = werkelijke_payload.decode("utf-8", errors="replace")
         except Exception:
             payload_str = repr(werkelijke_payload)
-        payload_hex = werkelijke_payload.hex(" ")
 
-        dst_type = classify_mac(eth.dst)
-        src_type = classify_mac(eth.src)
-
-        padding_regel = ""
-        if padding_lengte:
-            padding_regel = (
-                f"\n  Padding         : {padding_lengte} bytes (niet getoond — "
-                f"Ethernet vult het frame aan tot de minimale framegrootte)"
-            )
-
-        regel = (
-            f"────────────────────────────────────────────\n"
-            f"[{tijd}] Ethernet frame ontvangen op {self.iface}\n"
-            f"  Destination MAC : {eth.dst}  ({dst_type})\n"
-            f"  Source MAC      : {eth.src}  ({src_type})\n"
-            f"  EtherType       : 0x{eth.type:04X}\n"
-            f"  Framegrootte    : {lengte} bytes\n"
-            f"  Payload (tekst) : {payload_str!r}\n"
-            f"  Payload (hex)   : {payload_hex}"
-            f"{padding_regel}"
-        )
-        self.signals.frame_ontvangen.emit(regel)
+        # raw_payload is de volledige, ongewijzigde inhoud van het
+        # Data-veld zoals die over de kabel is gekomen (lengteveld +
+        # tekst + eventuele padding) — hiermee kan de ontvanger dezelfde
+        # visuele framerepresentatie tonen als de verzender.
+        frame_info = {
+            "dst_mac": eth.dst,
+            "src_mac": eth.src,
+            "ethertype_hex": f"0x{eth.type:04X}",
+            "ethertype_int": eth.type,
+            "payload_tekst": payload_str,
+            "data_bytes": raw_payload,
+        }
+        self.signals.frame_ontvangen.emit(frame_info)
 
     def stop(self):
         self._stop_event.set()
@@ -398,7 +372,7 @@ class HoofdVenster(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Ethernet Messenger — CCNA Lab Tool")
-        self.resize(720, 600)
+        self.resize(760, 900)
 
         self.sniffer_thread: SnifferThread | None = None
         self.sniffer_signals = SnifferSignals()
@@ -497,9 +471,25 @@ class HoofdVenster(QMainWindow):
         self.sniffer_checkbox.stateChanged.connect(self._sniffer_omschakelen)
         sniffer_layout.addWidget(self.sniffer_checkbox)
 
+        # Laatst ontvangen frame — zelfde visuele weergave als aan de
+        # verzendkant, zodat verzendende en ontvangende student precies
+        # hetzelfde frame te zien krijgen.
+        self.ontvangst_visualisatie = FrameVisualisatieWidget()
+        sniffer_layout.addWidget(self.ontvangst_visualisatie)
+        ontvangst_uitleg = QLabel(
+            "Toont het laatst ontvangen frame met EtherType 0x88B5, op "
+            "dezelfde manier weergegeven als bij de verzendende student — "
+            "inclusief een FCS die opnieuw berekend is uit de ontvangen "
+            "inhoud."
+        )
+        ontvangst_uitleg.setWordWrap(True)
+        ontvangst_uitleg.setStyleSheet("color: #666666; font-size: 11px;")
+        sniffer_layout.addWidget(ontvangst_uitleg)
+
         self.log_venster = QTextEdit()
         self.log_venster.setReadOnly(True)
         self.log_venster.setStyleSheet("font-family: monospace;")
+        self.log_venster.setMaximumHeight(120)
         sniffer_layout.addWidget(self.log_venster)
 
         wis_knop = QPushButton("Log wissen")
@@ -508,6 +498,15 @@ class HoofdVenster(QMainWindow):
 
         sniffer_group.setLayout(sniffer_layout)
         layout.addWidget(sniffer_group)
+
+        self.ontvangst_visualisatie.toon_frame(
+            dst_mac="-",
+            src_mac="-",
+            ethertype_hex=f"0x{DEFAULT_ETHERTYPE:04X}",
+            ethertype_int=DEFAULT_ETHERTYPE,
+            payload_tekst="(nog geen frame ontvangen)",
+            data_bytes=b"\x00" * MIN_DATA_BYTES,
+        )
 
     # ------------------------------------------------------------------
     # Root-rechten controle
@@ -655,8 +654,17 @@ class HoofdVenster(QMainWindow):
             self.sniffer_thread = None
             self._log("[SNIFFER] Gestopt.")
 
-    def _toon_ontvangen_frame(self, regel: str):
-        self._log(regel)
+    def _toon_ontvangen_frame(self, frame_info: dict):
+        self.ontvangst_visualisatie.toon_frame(
+            dst_mac=frame_info["dst_mac"],
+            src_mac=frame_info["src_mac"],
+            ethertype_hex=frame_info["ethertype_hex"],
+            ethertype_int=frame_info["ethertype_int"],
+            payload_tekst=frame_info["payload_tekst"],
+            data_bytes=frame_info["data_bytes"],
+        )
+        tijd = time.strftime("%H:%M:%S")
+        self._log(f"[{tijd}] Frame ontvangen — zie visuele weergave hierboven.")
 
     def _toon_sniffer_fout(self, foutmelding: str):
         self._log(f"[FOUT] {foutmelding}")

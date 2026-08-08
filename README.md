@@ -23,12 +23,6 @@ zien hoe Ethernet framing, MAC-adressering en EtherType werken.
   destination MAC (met snelknop voor broadcast `ff:ff:ff:ff:ff:ff`),
   EtherType vast ingesteld op `0x88B5`, vrije tekst payload.
 - Versturen van het frame via Scapy's `sendp()`.
-- Live sniffer (aan/uit via checkbox) die uitsluitend inkomende frames met
-  EtherType `0x88B5` toont (gefilterd met een BPF-filter, zodat het
-  logvenster niet vervuild raakt met ARP/IPv4/IPv6/STP/LLDP-verkeer). Elk
-  ontvangen frame wordt in mensleesbare vorm gedecodeerd: destination MAC
-  (met classificatie unicast/multicast/broadcast), source MAC, EtherType,
-  framegrootte, en de payload als zowel tekst als hexadecimale bytes.
 - Live visuele weergave van het op te bouwen Ethernet frame (Preamble,
   Destination/Source MAC, Type, Data, FCS) die meebeweegt terwijl je de
   velden invult. Elk veld toont de daadwerkelijke waarde in het vet
@@ -40,13 +34,21 @@ zien hoe Ethernet framing, MAC-adressering en EtherType werken.
   het standaard bitpatroon, en de getoonde FCS is een illustratieve
   CRC-32-checksum over de huidige frame-inhoud die dus verandert zodra
   je iets aanpast — precies zoals een echte FCS.
+- Live sniffer (aan/uit via checkbox) die uitsluitend inkomende frames met
+  EtherType `0x88B5` toont (gefilterd met een BPF-filter, zodat er geen
+  ruis van ARP/IPv4/IPv6/STP/LLDP-verkeer binnenkomt). Het laatst
+  ontvangen frame wordt getoond in **dezelfde visuele weergave** als aan
+  de verzendkant — inclusief een FCS die opnieuw berekend is uit de
+  ontvangen inhoud. Zo zien de verzendende en ontvangende student
+  precies hetzelfde frame. Een klein logvenster eronder houdt een
+  beknopte, doorlopende geschiedenis van ontvangen frames bij (met
+  tijdstip).
 - De payload wordt bij verzending voorafgegaan door een 2-byte lengteveld,
-  zodat de ontvanger altijd exact de ingetypte tekst kan tonen. Ethernet
-  vult frames die korter zijn dan de minimale framegrootte (60 bytes
-  exclusief FCS) automatisch aan met nulbytes; dankzij het lengteveld
-  herkent de ontvanger die padding en toont hij alleen het aantal
-  verborgen paddingbytes, in plaats van de nulbytes zelf te tonen als
-  onduidelijke "rommel" achter de payload.
+  zodat de ontvanger altijd exact de ingetypte tekst kan reconstrueren.
+  Ethernet vult frames die korter zijn dan de minimale framegrootte
+  (60 bytes exclusief FCS) automatisch aan met nulbytes; in de visuele
+  weergave is dat te zien doordat het Data-vak (met zijn werkelijke
+  bytegrootte erboven) breder is dan de daadwerkelijk ingetypte tekst.
 - Duidelijke foutafhandeling: waarschuwing wanneer het programma niet als
   root draait, met instructies om dit op te lossen.
 
