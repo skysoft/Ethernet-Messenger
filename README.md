@@ -29,6 +29,12 @@ zien hoe Ethernet framing, MAC-adressering en EtherType werken.
   ontvangen frame wordt in mensleesbare vorm gedecodeerd: destination MAC
   (met classificatie unicast/multicast/broadcast), source MAC, EtherType,
   framegrootte, en de payload als zowel tekst als hexadecimale bytes.
+- Live visuele weergave van het op te bouwen Ethernet frame (Preamble,
+  Destination/Source MAC, Type, Data, FCS) die meebeweegt terwijl je de
+  velden invult, zodat direct zichtbaar is hoe de ingevoerde waarden zich
+  verhouden tot de framestructuur. Preamble en FCS zijn grijs gemarkeerd
+  ter illustratie: die worden in werkelijkheid door de netwerkkaart
+  toegevoegd/gecontroleerd en niet door deze applicatie zelf.
 - De payload wordt bij verzending voorafgegaan door een 2-byte lengteveld,
   zodat de ontvanger altijd exact de ingetypte tekst kan tonen. Ethernet
   vult frames die korter zijn dan de minimale framegrootte (60 bytes

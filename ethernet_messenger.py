@@ -19,7 +19,8 @@ import sys
 import threading
 import time
 
-from PyQt6.QtCore import Qt, pyqtSignal, QObject
+from PyQt6.QtCore import Qt, pyqtSignal, QObject, QRectF
+from PyQt6.QtGui import QPainter, QColor, QPen, QFont
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -35,6 +36,7 @@ from PyQt6.QtWidgets import (
     QTextEdit,
     QMessageBox,
     QGroupBox,
+    QSizePolicy,
 )
 
 try:
@@ -51,6 +53,7 @@ except ImportError:
 DEFAULT_ETHERTYPE = 0x88B5  # gereserveerd voor experimenteel/onderwijsgebruik
 BPF_ETHERTYPE_FILTER = f"ether proto {DEFAULT_ETHERTYPE:#06x}"
 BROADCAST_MAC = "ff:ff:ff:ff:ff:ff"
+MIN_DATA_BYTES = 46  # minimale grootte van het Data-veld (Ethernet-norm)
 
 
 def is_loopback_interface(iface_name):
@@ -224,6 +227,124 @@ class SnifferThread(threading.Thread):
         self._stop_event.set()
 
 
+class FrameVisualisatieWidget(QWidget):
+    """
+    Zuiver visuele weergave van de opbouw van het Ethernet frame dat
+    (live, tijdens het intypen) verstuurd zou worden.
+
+    Preamble en FCS worden getekend ter illustratie van de volledige
+    frameopbouw, maar zijn grijs gemarkeerd: deze applicatie (en Scapy)
+    bouwt en verstuurt in werkelijkheid alleen Destination MAC t/m Data —
+    Preamble en FCS worden door de netwerkkaart/driver toegevoegd
+    respectievelijk gecontroleerd en zijn hier niet daadwerkelijk
+    aanwezig of zichtbaar.
+    """
+
+    VELDEN_BUITEN_APP = {"PREAMBLE", "FCS"}
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumHeight(120)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._velden = []
+
+    def toon_frame(self, dst_mac, src_mac, ethertype_hex, tekst_bytes, padding_bytes):
+        lengteveld_bytes = 2
+        data_waarde = f"{tekst_bytes} B tekst + {lengteveld_bytes} B lengteveld"
+        if padding_bytes:
+            data_waarde += f" + {padding_bytes} B padding"
+        data_lengte = max(tekst_bytes + lengteveld_bytes + padding_bytes, MIN_DATA_BYTES)
+
+        self._velden = [
+            ("PREAMBLE", 8, "(door netwerkkaart)"),
+            ("DESTINATION\nADDRESS", 6, dst_mac),
+            ("SOURCE\nADDRESS", 6, src_mac),
+            ("TYPE", 2, ethertype_hex),
+            ("DATA", data_lengte, data_waarde),
+            ("FCS", 4, "(door netwerkkaart)"),
+        ]
+        self.update()
+
+    def paintEvent(self, event):
+        if not self._velden:
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        marge = 8
+        top = 22
+        onder_ruimte = 34
+        hoogte_box = max(30, self.height() - top - onder_ruimte)
+        beschikbare_breedte = self.width() - 2 * marge
+
+        # Byte-gewicht per veld voor de breedte van de tekening: kleine
+        # velden krijgen een minimumbreedte zodat de tekst leesbaar
+        # blijft, grote velden (Data) worden begrensd zodat ze de rest
+        # niet volledig wegdrukken.
+        gewichten = [max(6, min(lengte, 60)) for _, lengte, _ in self._velden]
+        totaal_gewicht = sum(gewichten)
+
+        basis_font = QFont(self.font().family())
+
+        x = float(marge)
+        for (naam, lengte, waarde), gewicht in zip(self._velden, gewichten):
+            breedte = beschikbare_breedte * gewicht / totaal_gewicht
+            rect = QRectF(x, top, breedte, hoogte_box)
+            is_buiten_app = naam in self.VELDEN_BUITEN_APP
+            vulkleur = QColor("#d8d8d8") if is_buiten_app else QColor("#8ec7f0")
+            randkleur = QColor("#777777") if is_buiten_app else QColor("#12467a")
+
+            # bytelengte-label boven de box
+            font_label = QFont(basis_font)
+            font_label.setPointSize(8)
+            painter.setFont(font_label)
+            painter.setPen(QColor("#555555"))
+            painter.drawText(
+                QRectF(x, 2, breedte, top - 4),
+                Qt.AlignmentFlag.AlignCenter,
+                f"{lengte} B",
+            )
+
+            # veldbox
+            pen = QPen(randkleur)
+            pen.setWidthF(1.4)
+            painter.setPen(pen)
+            painter.setBrush(vulkleur)
+            painter.drawRect(rect)
+
+            # veldnaam
+            font_naam = QFont(basis_font)
+            font_naam.setPointSize(8)
+            font_naam.setBold(True)
+            painter.setFont(font_naam)
+            painter.setPen(QColor("#444444") if is_buiten_app else QColor("#0b2e52"))
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, naam)
+
+            # werkelijke waarde onder de box
+            font_waarde = QFont(basis_font)
+            font_waarde.setPointSize(7)
+            font_waarde.setItalic(True)
+            painter.setFont(font_waarde)
+            painter.setPen(QColor("#333333"))
+            waarde_rect = QRectF(x, top + hoogte_box + 2, breedte, onder_ruimte - 2)
+            painter.drawText(
+                waarde_rect,
+                int(Qt.AlignmentFlag.AlignHCenter) | int(Qt.AlignmentFlag.AlignTop) | int(Qt.TextFlag.TextWordWrap),
+                str(waarde),
+            )
+
+            x += breedte
+
+        # dashed buitenrand om het hele frame, ter illustratie dat dit de
+        # conceptuele volledige framegrootte op de kabel is
+        painter.setPen(QPen(QColor("#12467a"), 1.4, Qt.PenStyle.DashLine))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(QRectF(marge, top, beschikbare_breedte, hoogte_box))
+
+        painter.end()
+
+
 class HoofdVenster(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -290,6 +411,28 @@ class HoofdVenster(QMainWindow):
 
         frame_group.setLayout(frame_layout)
         layout.addWidget(frame_group)
+
+        # Live visuele weergave van het op te bouwen frame
+        visualisatie_group = QGroupBox("Visuele weergave van het frame (live)")
+        visualisatie_layout = QVBoxLayout()
+        self.frame_visualisatie = FrameVisualisatieWidget()
+        visualisatie_layout.addWidget(self.frame_visualisatie)
+        visualisatie_uitleg = QLabel(
+            "Preamble en FCS (grijs) worden ter illustratie getoond, maar "
+            "door de netwerkkaart toegevoegd/gecontroleerd — deze "
+            "applicatie bouwt en verstuurt zelf alleen Destination MAC "
+            "t/m Data."
+        )
+        visualisatie_uitleg.setWordWrap(True)
+        visualisatie_uitleg.setStyleSheet("color: #666666; font-size: 11px;")
+        visualisatie_layout.addWidget(visualisatie_uitleg)
+        visualisatie_group.setLayout(visualisatie_layout)
+        layout.addWidget(visualisatie_group)
+
+        self.dst_mac_edit.textChanged.connect(self._bijwerken_visualisatie)
+        self.src_mac_edit.textChanged.connect(self._bijwerken_visualisatie)
+        self.payload_edit.textChanged.connect(self._bijwerken_visualisatie)
+        self._bijwerken_visualisatie()
 
         # Verstuurknop
         verstuur_knop = QPushButton("Frame versturen")
@@ -369,6 +512,23 @@ class HoofdVenster(QMainWindow):
     # ------------------------------------------------------------------
     def _vul_broadcast_in(self):
         self.dst_mac_edit.setText(BROADCAST_MAC)
+
+    def _bijwerken_visualisatie(self):
+        dst_mac = self.dst_mac_edit.text().strip() or "(nog niet ingevuld)"
+        src_mac = self.src_mac_edit.text().strip() or "(nog niet ingevuld)"
+        payload_tekst = self.payload_edit.text()
+
+        tekst_bytes = len(payload_tekst.encode("utf-8"))
+        lengteveld_bytes = 2
+        padding_bytes = max(0, MIN_DATA_BYTES - lengteveld_bytes - tekst_bytes)
+
+        self.frame_visualisatie.toon_frame(
+            dst_mac=dst_mac,
+            src_mac=src_mac,
+            ethertype_hex=f"0x{DEFAULT_ETHERTYPE:04X}",
+            tekst_bytes=tekst_bytes,
+            padding_bytes=padding_bytes,
+        )
 
     def _verstuur_frame(self):
         iface_name = self.iface_combo.currentData()
