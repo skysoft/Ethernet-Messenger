@@ -16,15 +16,25 @@ zien hoe Ethernet framing, MAC-adressering en EtherType werken.
 ## Functionaliteit
 
 - Overzichtelijke indeling in twee tabbladen, **Verzenden** en
-  **Ontvangen**, met de interface-selectie erboven (die geldt voor
-  beide kanten).
+  **Ontvangen**, met de interface-selectie en modus-keuze erboven (die
+  gelden voor beide kanten).
 - Interface-selectie met automatische detectie van het eigen MAC-adres.
   De loopback-interface (`lo`) wordt niet getoond, en standaard wordt de
   eerste fysieke netwerkinterface geselecteerd (dus geen virtuele
   interfaces zoals `docker0`, bridges of veth-paren).
+- **Modus-keuze (Mode-A t/m Mode-D)**: bepaalt welke protocol-opties
+  beschikbaar zijn bij het opbouwen van een frame. Mode-A (standaard)
+  komt overeen met de bestaande, volledig functionele Ethernet-werking
+  (vast EtherType `0x88B5`). Vanaf Mode-B verschijnt er in plaats van
+  het vaste EtherType-label een keuzelijst met extra protocollen
+  (Mode-B: + ARP, Mode-C: + IPv4, Mode-D: + IPv6) — dit is voorlopig
+  vooral een **visuele voorbereiding** op latere uitbreidingen: alleen
+  Ethernet kan in deze versie daadwerkelijk verzonden worden, en
+  ontvangen frames blijven altijd gefilterd op EtherType `0x88B5`,
+  ongeacht de gekozen modus.
 - Ethernet frame opbouwen: source MAC (auto-ingevuld, aanpasbaar),
   destination MAC (met snelknop voor broadcast `ff:ff:ff:ff:ff:ff`),
-  EtherType vast ingesteld op `0x88B5`, vrije tekst payload.
+  EtherType (in Mode-A vast op `0x88B5`), vrije tekst payload.
 - Versturen van het frame via Scapy's `sendp()`.
 - Live visuele weergave van het op te bouwen Ethernet frame (Preamble,
   Destination/Source MAC, Type, Data, FCS) die meebeweegt terwijl je de
@@ -39,13 +49,20 @@ zien hoe Ethernet framing, MAC-adressering en EtherType werken.
   je iets aanpast — precies zoals een echte FCS.
 - Live sniffer (aan/uit via checkbox) die uitsluitend inkomende frames met
   EtherType `0x88B5` toont (gefilterd met een BPF-filter, zodat er geen
-  ruis van ARP/IPv4/IPv6/STP/LLDP-verkeer binnenkomt). Het laatst
-  ontvangen frame wordt getoond in **dezelfde visuele weergave** als aan
-  de verzendkant — inclusief een FCS die opnieuw berekend is uit de
-  ontvangen inhoud. Zo zien de verzendende en ontvangende student
-  precies hetzelfde frame. Een klein logvenster eronder houdt een
-  beknopte, doorlopende geschiedenis van ontvangen frames bij (met
-  tijdstip).
+  ruis van ARP/IPv4/IPv6/STP/LLDP-verkeer binnenkomt). Zolang er nog
+  niets is ontvangen, toont de visualisatie geen frame-inhoud (dus ook
+  geen nagemaakte Preamble/Type/FCS) — pas na het eerste ontvangen
+  frame worden de velden echt ingevuld.
+- **Geschiedenislijst van ontvangen frames**: elk ontvangen frame met
+  EtherType `0x88B5` verschijnt in een lijst; door een frame in die lijst
+  aan te klikken wordt de visualisatie bijgewerkt met de inhoud van dát
+  frame, zodat je kunt terugkijken naar eerder ontvangen frames. Nieuwe
+  frames worden automatisch geselecteerd zodra ze binnenkomen. De
+  visualisatie is **exact dezelfde weergave** als aan de verzendkant —
+  inclusief een FCS die opnieuw berekend is uit de ontvangen inhoud —
+  zodat de verzendende en ontvangende student precies hetzelfde frame
+  zien. Een klein logvenster eronder houdt een beknopte, doorlopende
+  geschiedenis bij (met tijdstip).
 - De payload wordt bij verzending voorafgegaan door een 2-byte lengteveld,
   zodat de ontvanger altijd exact de ingetypte tekst kan reconstrueren.
   Ethernet vult frames die korter zijn dan de minimale framegrootte

@@ -40,6 +40,9 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QSizePolicy,
     QTabWidget,
+    QStackedWidget,
+    QListWidget,
+    QListWidgetItem,
 )
 
 try:
@@ -57,6 +60,33 @@ DEFAULT_ETHERTYPE = 0x88B5  # gereserveerd voor experimenteel/onderwijsgebruik
 BPF_ETHERTYPE_FILTER = f"ether proto {DEFAULT_ETHERTYPE:#06x}"
 BROADCAST_MAC = "ff:ff:ff:ff:ff:ff"
 MIN_DATA_BYTES = 46  # minimale grootte van het Data-veld (Ethernet-norm)
+
+# Modi: elke volgende modus voegt protocol-opties toe aan de te kiezen
+# EtherType bij het opbouwen van een frame. Dit is voorlopig alleen een
+# visuele/keuze-uitbreiding — daadwerkelijk verzenden werkt in deze
+# versie nog uitsluitend met Ethernet (0x88B5); ARP/IPv4/IPv6 worden in
+# een latere fase functioneel uitgewerkt.
+MODUS_PROTOCOLLEN = {
+    "Mode-A": [("Ethernet (0x88B5)", DEFAULT_ETHERTYPE)],
+    "Mode-B": [("Ethernet (0x88B5)", DEFAULT_ETHERTYPE), ("ARP (0x0806)", 0x0806)],
+    "Mode-C": [
+        ("Ethernet (0x88B5)", DEFAULT_ETHERTYPE),
+        ("ARP (0x0806)", 0x0806),
+        ("IPv4 (0x0800)", 0x0800),
+    ],
+    "Mode-D": [
+        ("Ethernet (0x88B5)", DEFAULT_ETHERTYPE),
+        ("ARP (0x0806)", 0x0806),
+        ("IPv4 (0x0800)", 0x0800),
+        ("IPv6 (0x86DD)", 0x86DD),
+    ],
+}
+MODUS_OMSCHRIJVING = {
+    "Mode-A": "Mode-A — alleen Ethernet",
+    "Mode-B": "Mode-B — Ethernet + ARP",
+    "Mode-C": "Mode-C — Ethernet + ARP + IPv4",
+    "Mode-D": "Mode-D — Ethernet + ARP + IPv4 + IPv6",
+}
 
 
 def is_loopback_interface(iface_name):
@@ -260,6 +290,18 @@ class FrameVisualisatieWidget(QWidget):
         self.setMinimumHeight(130)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._velden = []
+        self._leeg_bericht = ""
+
+    def toon_leeg(self, bericht):
+        """
+        Toont geen frame-inhoud: geen enkel veld wordt ingevuld, ook niet
+        Preamble/Type/FCS. Bedoeld voor de ontvangstkant zolang er nog
+        geen frame is binnengekomen — anders zou de weergave onterecht
+        suggereren dat er al iets ontvangen is.
+        """
+        self._velden = []
+        self._leeg_bericht = bericht
+        self.update()
 
     def toon_frame(self, dst_mac, src_mac, ethertype_hex, ethertype_int, payload_tekst, data_bytes):
         """
@@ -283,11 +325,23 @@ class FrameVisualisatieWidget(QWidget):
         self.update()
 
     def paintEvent(self, event):
-        if not self._velden:
-            return
-
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        if not self._velden:
+            if self._leeg_bericht:
+                font_leeg = QFont(self.font().family())
+                font_leeg.setPointSize(9)
+                font_leeg.setItalic(True)
+                painter.setFont(font_leeg)
+                painter.setPen(QColor("#888888"))
+                painter.drawText(
+                    self.rect(),
+                    int(Qt.AlignmentFlag.AlignCenter) | int(Qt.TextFlag.TextWordWrap),
+                    self._leeg_bericht,
+                )
+            painter.end()
+            return
 
         marge = 8
         top = 22
@@ -380,6 +434,8 @@ class HoofdVenster(QMainWindow):
         self.sniffer_signals.frame_ontvangen.connect(self._toon_ontvangen_frame)
         self.sniffer_signals.fout.connect(self._toon_sniffer_fout)
 
+        self._actief_ethertype = DEFAULT_ETHERTYPE
+
         self._bouw_ui()
         self._controleer_root_rechten()
         self._vul_interfaces()
@@ -411,10 +467,39 @@ class HoofdVenster(QMainWindow):
         iface_group.setLayout(iface_layout)
         layout.addWidget(iface_group)
 
+        # Modus-selectie: elke volgende modus voegt protocol-opties toe
+        # aan het EtherType-veld bij het opbouwen van een frame. Widgets
+        # die de gekozen modus beïnvloedt (protocol_combo, ethertype_stack)
+        # worden pas hierna gebouwd (in _bouw_verzenden_tab), dus het
+        # signaal wordt bewust pas ná het bouwen van de tabs gekoppeld.
+        modus_group = QGroupBox("Modus")
+        modus_layout = QVBoxLayout()
+        self.modus_combo = QComboBox()
+        for sleutel in ("Mode-A", "Mode-B", "Mode-C", "Mode-D"):
+            self.modus_combo.addItem(MODUS_OMSCHRIJVING[sleutel], sleutel)
+        modus_layout.addWidget(self.modus_combo)
+        modus_uitleg = QLabel(
+            "Mode-A biedt alleen Ethernet-framing (de huidige "
+            "functionaliteit). Vanaf Mode-B verschijnen er extra "
+            "protocol-opties bij het opbouwen van een frame, ter "
+            "voorbereiding op latere uitbreidingen — voorlopig kan "
+            "daadwerkelijk alleen Ethernet (0x88B5) verzonden worden. "
+            "Ontvangen frames worden, ongeacht de gekozen modus, nog "
+            "altijd gefilterd op Ethernet (EtherType 0x88B5)."
+        )
+        modus_uitleg.setWordWrap(True)
+        modus_uitleg.setStyleSheet("color: #666666; font-size: 11px;")
+        modus_layout.addWidget(modus_uitleg)
+        modus_group.setLayout(modus_layout)
+        layout.addWidget(modus_group)
+
         tabs = QTabWidget()
         layout.addWidget(tabs)
         tabs.addTab(self._bouw_verzenden_tab(), "Verzenden")
         tabs.addTab(self._bouw_ontvangen_tab(), "Ontvangen")
+
+        self.modus_combo.currentIndexChanged.connect(self._modus_gewijzigd)
+        self._modus_gewijzigd(self.modus_combo.currentIndex())
 
     def _bouw_verzenden_tab(self):
         tab = QWidget()
@@ -436,8 +521,16 @@ class HoofdVenster(QMainWindow):
         dst_layout.addWidget(broadcast_knop)
         frame_layout.addRow("Destination MAC:", dst_layout)
 
+        # In Mode-A een vast label; vanaf Mode-B een protocol-keuzelijst
+        # (zie _toepassen_modus). Een QStackedWidget zodat Mode-A er
+        # precies zo uitziet als voorheen.
+        self.ethertype_stack = QStackedWidget()
         self.ethertype_label = QLabel(f"0x{DEFAULT_ETHERTYPE:04X} (vast, voor dit lab)")
-        frame_layout.addRow("EtherType:", self.ethertype_label)
+        self.ethertype_stack.addWidget(self.ethertype_label)
+        self.protocol_combo = QComboBox()
+        self.protocol_combo.currentIndexChanged.connect(self._protocol_gewijzigd)
+        self.ethertype_stack.addWidget(self.protocol_combo)
+        frame_layout.addRow("EtherType:", self.ethertype_stack)
 
         self.payload_edit = QLineEdit()
         self.payload_edit.setPlaceholderText("Vrije tekst payload")
@@ -487,13 +580,19 @@ class HoofdVenster(QMainWindow):
         self.sniffer_checkbox.stateChanged.connect(self._sniffer_omschakelen)
         sniffer_layout.addWidget(self.sniffer_checkbox)
 
-        # Laatst ontvangen frame — zelfde visuele weergave als aan de
+        # Geselecteerd frame — zelfde visuele weergave als aan de
         # verzendkant, zodat verzendende en ontvangende student precies
-        # hetzelfde frame te zien krijgen.
+        # hetzelfde frame te zien krijgen. Zolang er nog niets is
+        # binnengekomen, wordt er geen frame-inhoud getoond (geen nep
+        # Preamble/Type/FCS).
         self.ontvangst_visualisatie = FrameVisualisatieWidget()
+        self.ontvangst_visualisatie.toon_leeg(
+            "Nog geen frame ontvangen — schakel de sniffer in en wacht op "
+            "inkomend verkeer met EtherType 0x88B5."
+        )
         sniffer_layout.addWidget(self.ontvangst_visualisatie)
         ontvangst_uitleg = QLabel(
-            "Toont het laatst ontvangen frame met EtherType 0x88B5, op "
+            "Toont het geselecteerde frame uit de lijst hieronder, op "
             "dezelfde manier weergegeven als bij de verzendende student — "
             "inclusief een FCS die opnieuw berekend is uit de ontvangen "
             "inhoud."
@@ -502,10 +601,20 @@ class HoofdVenster(QMainWindow):
         ontvangst_uitleg.setStyleSheet("color: #666666; font-size: 11px;")
         sniffer_layout.addWidget(ontvangst_uitleg)
 
+        # Geschiedenis: elk ontvangen frame komt in deze lijst; door een
+        # eerder frame aan te klikken wordt de visualisatie erboven
+        # bijgewerkt, zodat je kunt terugkijken naar eerder ontvangen
+        # frames.
+        sniffer_layout.addWidget(QLabel("Ontvangen frames (klik om terug te kijken):"))
+        self.frame_lijst = QListWidget()
+        self.frame_lijst.setMaximumHeight(140)
+        self.frame_lijst.currentRowChanged.connect(self._frame_geschiedenis_geselecteerd)
+        sniffer_layout.addWidget(self.frame_lijst)
+
         self.log_venster = QTextEdit()
         self.log_venster.setReadOnly(True)
         self.log_venster.setStyleSheet("font-family: monospace;")
-        self.log_venster.setMaximumHeight(120)
+        self.log_venster.setMaximumHeight(90)
         sniffer_layout.addWidget(self.log_venster)
 
         wis_knop = QPushButton("Log wissen")
@@ -514,15 +623,6 @@ class HoofdVenster(QMainWindow):
 
         sniffer_group.setLayout(sniffer_layout)
         tab_layout.addWidget(sniffer_group)
-
-        self.ontvangst_visualisatie.toon_frame(
-            dst_mac="-",
-            src_mac="-",
-            ethertype_hex=f"0x{DEFAULT_ETHERTYPE:04X}",
-            ethertype_int=DEFAULT_ETHERTYPE,
-            payload_tekst="(nog geen frame ontvangen)",
-            data_bytes=b"\x00" * MIN_DATA_BYTES,
-        )
 
         return tab
 
@@ -580,6 +680,37 @@ class HoofdVenster(QMainWindow):
     def _vul_broadcast_in(self):
         self.dst_mac_edit.setText(BROADCAST_MAC)
 
+    def _modus_gewijzigd(self, index):
+        sleutel = self.modus_combo.itemData(index)
+        if sleutel is None:
+            return
+        self._toepassen_modus(sleutel)
+
+    def _toepassen_modus(self, modus_sleutel):
+        if modus_sleutel == "Mode-A":
+            self.ethertype_stack.setCurrentWidget(self.ethertype_label)
+            self._actief_ethertype = DEFAULT_ETHERTYPE
+        else:
+            protocollen = MODUS_PROTOCOLLEN[modus_sleutel]
+            self.protocol_combo.blockSignals(True)
+            self.protocol_combo.clear()
+            for naam, waarde in protocollen:
+                self.protocol_combo.addItem(naam, waarde)
+            self.protocol_combo.setCurrentIndex(0)
+            self.protocol_combo.blockSignals(False)
+            self._actief_ethertype = protocollen[0][1]
+            self.ethertype_stack.setCurrentWidget(self.protocol_combo)
+        self._bijwerken_visualisatie()
+
+    def _protocol_gewijzigd(self, index):
+        if index < 0:
+            return
+        waarde = self.protocol_combo.itemData(index)
+        if waarde is None:
+            return
+        self._actief_ethertype = waarde
+        self._bijwerken_visualisatie()
+
     def _bijwerken_visualisatie(self):
         dst_mac = self.dst_mac_edit.text().strip()
         src_mac = self.src_mac_edit.text().strip()
@@ -592,8 +723,8 @@ class HoofdVenster(QMainWindow):
         self.frame_visualisatie.toon_frame(
             dst_mac=dst_mac,
             src_mac=src_mac,
-            ethertype_hex=f"0x{DEFAULT_ETHERTYPE:04X}",
-            ethertype_int=DEFAULT_ETHERTYPE,
+            ethertype_hex=f"0x{self._actief_ethertype:04X}",
+            ethertype_int=self._actief_ethertype,
             payload_tekst=payload_tekst,
             data_bytes=data_bytes,
         )
@@ -602,6 +733,18 @@ class HoofdVenster(QMainWindow):
         iface_name = self.iface_combo.currentData()
         if not iface_name:
             QMessageBox.warning(self, "Fout", "Geen geldige interface geselecteerd.")
+            return
+
+        if self._actief_ethertype != DEFAULT_ETHERTYPE:
+            QMessageBox.information(
+                self,
+                "Nog niet beschikbaar",
+                "Dit protocol is in deze versie nog niet functioneel "
+                "geïmplementeerd — er kan op dit moment alleen "
+                "daadwerkelijk Ethernet (0x88B5) verzonden worden. Kies "
+                "'Ethernet (0x88B5)' in de protocollijst, of zet de "
+                "modus terug naar Mode-A.",
+            )
             return
 
         src_mac = self.src_mac_edit.text().strip()
@@ -615,11 +758,11 @@ class HoofdVenster(QMainWindow):
             return
 
         try:
-            frame = Ether(dst=dst_mac, src=src_mac or None, type=DEFAULT_ETHERTYPE) / bouw_payload_bytes(payload_tekst)
+            frame = Ether(dst=dst_mac, src=src_mac or None, type=self._actief_ethertype) / bouw_payload_bytes(payload_tekst)
             sendp(frame, iface=iface_name, verbose=False)
             self._log(
                 f"[VERZONDEN] src={frame.src} dst={frame.dst} "
-                f"ethertype=0x{DEFAULT_ETHERTYPE:04X} payload={payload_tekst!r}"
+                f"ethertype=0x{self._actief_ethertype:04X} payload={payload_tekst!r}"
             )
         except PermissionError:
             QMessageBox.critical(
@@ -673,6 +816,28 @@ class HoofdVenster(QMainWindow):
             self._log("[SNIFFER] Gestopt.")
 
     def _toon_ontvangen_frame(self, frame_info: dict):
+        tijd = time.strftime("%H:%M:%S")
+        item_tekst = (
+            f"[{tijd}] {frame_info['dst_mac']} ← {frame_info['src_mac']}  "
+            f"{frame_info['payload_tekst']!r}"
+        )
+        item = QListWidgetItem(item_tekst)
+        item.setData(Qt.ItemDataRole.UserRole, frame_info)
+        self.frame_lijst.addItem(item)
+        # Springt automatisch mee naar het nieuwste frame; via de lijst
+        # kan de gebruiker daarna terugklikken naar een eerder frame.
+        self.frame_lijst.setCurrentItem(item)
+        self.frame_lijst.scrollToItem(item)
+
+        self._log(f"[{tijd}] Frame ontvangen — zie visuele weergave hierboven.")
+
+    def _frame_geschiedenis_geselecteerd(self, rij):
+        if rij < 0:
+            return
+        item = self.frame_lijst.item(rij)
+        if item is None:
+            return
+        frame_info = item.data(Qt.ItemDataRole.UserRole)
         self.ontvangst_visualisatie.toon_frame(
             dst_mac=frame_info["dst_mac"],
             src_mac=frame_info["src_mac"],
@@ -681,8 +846,6 @@ class HoofdVenster(QMainWindow):
             payload_tekst=frame_info["payload_tekst"],
             data_bytes=frame_info["data_bytes"],
         )
-        tijd = time.strftime("%H:%M:%S")
-        self._log(f"[{tijd}] Frame ontvangen — zie visuele weergave hierboven.")
 
     def _toon_sniffer_fout(self, foutmelding: str):
         self._log(f"[FOUT] {foutmelding}")
