@@ -48,17 +48,56 @@ except ImportError:
 
 
 DEFAULT_ETHERTYPE = 0x88B5  # gereserveerd voor experimenteel/onderwijsgebruik
+BPF_ETHERTYPE_FILTER = f"ether proto {DEFAULT_ETHERTYPE:#06x}"
 BROADCAST_MAC = "ff:ff:ff:ff:ff:ff"
+
+
+def is_loopback_interface(iface_name):
+    """Bepaalt of een interface de loopback-interface is."""
+    if iface_name == "lo" or iface_name.startswith("lo:"):
+        return True
+    try:
+        with open(f"/sys/class/net/{iface_name}/flags") as f:
+            IFF_LOOPBACK = 0x8
+            return int(f.read().strip(), 16) & IFF_LOOPBACK != 0
+    except Exception:
+        return False
+
+
+def is_physical_interface(iface_name):
+    """
+    Bepaalt of een interface een fysieke netwerkkaart is (bijv. een
+    Ethernet- of wifi-adapter), in tegenstelling tot virtuele interfaces
+    zoals bridges, veth-paren, docker0, tun/tap, enz.
+    """
+    return os.path.exists(f"/sys/class/net/{iface_name}/device")
+
+
+def classify_mac(mac):
+    """Classificeert een MAC-adres als broadcast, multicast of unicast."""
+    if mac.lower() == BROADCAST_MAC:
+        return "broadcast"
+    try:
+        eerste_octet = int(mac.split(":")[0], 16)
+    except (ValueError, IndexError):
+        return "onbekend"
+    # I/G-bit (bit 0 van het eerste octet): 1 = multicast, 0 = unicast
+    if eerste_octet & 0x01:
+        return "multicast"
+    return "unicast"
 
 
 def get_readable_interfaces():
     """
     Geeft een lijst van (leesbare_naam, scapy_interface_naam) terug voor
-    alle beschikbare netwerkinterfaces.
+    alle beschikbare netwerkinterfaces, met uitzondering van de
+    loopback-interface.
     """
     interfaces = []
     try:
         for iface_name in get_if_list():
+            if is_loopback_interface(iface_name):
+                continue
             readable = iface_name
             try:
                 iface_obj = conf.ifaces.dev_from_name(iface_name)
@@ -90,18 +129,15 @@ class SnifferThread(threading.Thread):
 
     def run(self):
         try:
-            sniff(
-                iface=self.iface,
-                prn=self._verwerk_frame,
-                store=False,
-                stop_filter=lambda pkt: self._stop_event.is_set(),
-                timeout=1,
-            )
             # sniff() met timeout stopt na 1s als er geen packets zijn;
-            # blijf herstarten totdat stop() is aangeroepen.
+            # blijf herstarten totdat stop() is aangeroepen. Het BPF-filter
+            # zorgt dat alleen frames met EtherType 0x88B5 worden getoond —
+            # zo blijft het logvenster overzichtelijk tussen alle overige
+            # verkeer (ARP, IPv4/IPv6, STP, LLDP, ...) op het segment.
             while not self._stop_event.is_set():
                 sniff(
                     iface=self.iface,
+                    filter=BPF_ETHERTYPE_FILTER,
                     prn=self._verwerk_frame,
                     store=False,
                     stop_filter=lambda pkt: self._stop_event.is_set(),
@@ -114,6 +150,9 @@ class SnifferThread(threading.Thread):
         if not pkt.haslayer(Ether):
             return
         eth = pkt[Ether]
+        if eth.type != DEFAULT_ETHERTYPE:
+            return  # extra vangnet naast het BPF-filter
+
         tijd = time.strftime("%H:%M:%S")
         lengte = len(pkt)
         payload = bytes(eth.payload)
@@ -121,11 +160,20 @@ class SnifferThread(threading.Thread):
             payload_str = payload.decode("utf-8", errors="replace")
         except Exception:
             payload_str = repr(payload)
+        payload_hex = payload.hex(" ")
+
+        dst_type = classify_mac(eth.dst)
+        src_type = classify_mac(eth.src)
 
         regel = (
-            f"[{tijd}] src={eth.src} dst={eth.dst} "
-            f"ethertype=0x{eth.type:04X} lengte={lengte}B "
-            f"payload={payload_str!r}"
+            f"────────────────────────────────────────────\n"
+            f"[{tijd}] Ethernet frame ontvangen op {self.iface}\n"
+            f"  Destination MAC : {eth.dst}  ({dst_type})\n"
+            f"  Source MAC      : {eth.src}  ({src_type})\n"
+            f"  EtherType       : 0x{eth.type:04X}\n"
+            f"  Framegrootte    : {lengte} bytes\n"
+            f"  Payload (tekst) : {payload_str!r}\n"
+            f"  Payload (hex)   : {payload_hex}"
         )
         self.signals.frame_ontvangen.emit(regel)
 
@@ -190,8 +238,8 @@ class HoofdVenster(QMainWindow):
         dst_layout.addWidget(broadcast_knop)
         frame_layout.addRow("Destination MAC:", dst_layout)
 
-        self.ethertype_edit = QLineEdit(f"0x{DEFAULT_ETHERTYPE:04X}")
-        frame_layout.addRow("EtherType:", self.ethertype_edit)
+        self.ethertype_label = QLabel(f"0x{DEFAULT_ETHERTYPE:04X} (vast, voor dit lab)")
+        frame_layout.addRow("EtherType:", self.ethertype_label)
 
         self.payload_edit = QLineEdit()
         self.payload_edit.setPlaceholderText("Vrije tekst payload")
@@ -251,7 +299,17 @@ class HoofdVenster(QMainWindow):
             return
         for readable, iface_name in interfaces:
             self.iface_combo.addItem(readable, iface_name)
-        self._interface_gewijzigd(0)
+
+        # Standaard de eerste fysieke interface selecteren (bijv. de
+        # ingebouwde Ethernet- of wifi-adapter), niet zomaar de eerste
+        # interface in de lijst (die vaak virtueel is, zoals docker0).
+        standaard_index = 0
+        for i, (_, iface_name) in enumerate(interfaces):
+            if is_physical_interface(iface_name):
+                standaard_index = i
+                break
+        self.iface_combo.setCurrentIndex(standaard_index)
+        self._interface_gewijzigd(standaard_index)
 
     def _interface_gewijzigd(self, index):
         iface_name = self.iface_combo.currentData()
@@ -277,7 +335,6 @@ class HoofdVenster(QMainWindow):
 
         src_mac = self.src_mac_edit.text().strip()
         dst_mac = self.dst_mac_edit.text().strip()
-        ethertype_tekst = self.ethertype_edit.text().strip()
         payload_tekst = self.payload_edit.text()
 
         if not dst_mac:
@@ -287,19 +344,11 @@ class HoofdVenster(QMainWindow):
             return
 
         try:
-            ethertype = int(ethertype_tekst, 16) if ethertype_tekst.lower().startswith("0x") else int(ethertype_tekst)
-        except ValueError:
-            QMessageBox.warning(
-                self, "Fout", "EtherType is ongeldig. Gebruik bijv. 0x88B5."
-            )
-            return
-
-        try:
-            frame = Ether(dst=dst_mac, src=src_mac or None, type=ethertype) / payload_tekst.encode("utf-8")
+            frame = Ether(dst=dst_mac, src=src_mac or None, type=DEFAULT_ETHERTYPE) / payload_tekst.encode("utf-8")
             sendp(frame, iface=iface_name, verbose=False)
             self._log(
                 f"[VERZONDEN] src={frame.src} dst={frame.dst} "
-                f"ethertype=0x{ethertype:04X} payload={payload_tekst!r}"
+                f"ethertype=0x{DEFAULT_ETHERTYPE:04X} payload={payload_tekst!r}"
             )
         except PermissionError:
             QMessageBox.critical(

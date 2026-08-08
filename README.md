@@ -16,12 +16,19 @@ zien hoe Ethernet framing, MAC-adressering en EtherType werken.
 ## Functionaliteit
 
 - Interface-selectie met automatische detectie van het eigen MAC-adres.
+  De loopback-interface (`lo`) wordt niet getoond, en standaard wordt de
+  eerste fysieke netwerkinterface geselecteerd (dus geen virtuele
+  interfaces zoals `docker0`, bridges of veth-paren).
 - Ethernet frame opbouwen: source MAC (auto-ingevuld, aanpasbaar),
   destination MAC (met snelknop voor broadcast `ff:ff:ff:ff:ff:ff`),
-  EtherType (standaard `0x88B5`), vrije tekst payload.
+  EtherType vast ingesteld op `0x88B5`, vrije tekst payload.
 - Versturen van het frame via Scapy's `sendp()`.
-- Live sniffer (aan/uit via checkbox) die inkomende Ethernet frames toont:
-  source/dest MAC, EtherType, lengte en payload.
+- Live sniffer (aan/uit via checkbox) die uitsluitend inkomende frames met
+  EtherType `0x88B5` toont (gefilterd met een BPF-filter, zodat het
+  logvenster niet vervuild raakt met ARP/IPv4/IPv6/STP/LLDP-verkeer). Elk
+  ontvangen frame wordt in mensleesbare vorm gedecodeerd: destination MAC
+  (met classificatie unicast/multicast/broadcast), source MAC, EtherType,
+  framegrootte, en de payload als zowel tekst als hexadecimale bytes.
 - Duidelijke foutafhandeling: waarschuwing wanneer het programma niet als
   root draait, met instructies om dit op te lossen.
 
