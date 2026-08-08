@@ -21,7 +21,7 @@ import threading
 import time
 import zlib
 
-from PyQt6.QtCore import Qt, pyqtSignal, QObject, QRectF
+from PyQt6.QtCore import Qt, pyqtSignal, QObject, QRectF, QTimer
 from PyQt6.QtGui import QPainter, QColor, QPen, QFont
 from PyQt6.QtWidgets import (
     QApplication,
@@ -865,7 +865,12 @@ class HoofdVenster(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     venster = HoofdVenster()
-    venster.showMaximized()
+    # showMaximized() direct aanroepen wordt door sommige window managers
+    # genegeerd als het venster nog niet bij de WM geregistreerd is (dus
+    # vóórdat de event-loop draait). Via een timer van 0ms gebeurt de
+    # maximalisatie pas zodra de event-loop actief is, wat betrouwbaarder
+    # werkt.
+    QTimer.singleShot(0, venster.showMaximized)
     sys.exit(app.exec())
 
 
