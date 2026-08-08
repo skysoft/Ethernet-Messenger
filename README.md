@@ -15,6 +15,9 @@ zien hoe Ethernet framing, MAC-adressering en EtherType werken.
 
 ## Functionaliteit
 
+- Overzichtelijke indeling in twee tabbladen, **Verzenden** en
+  **Ontvangen**, met de interface-selectie erboven (die geldt voor
+  beide kanten).
 - Interface-selectie met automatische detectie van het eigen MAC-adres.
   De loopback-interface (`lo`) wordt niet getoond, en standaard wordt de
   eerste fysieke netwerkinterface geselecteerd (dus geen virtuele

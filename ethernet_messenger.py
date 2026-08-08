@@ -39,6 +39,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QGroupBox,
     QSizePolicy,
+    QTabWidget,
 )
 
 try:
@@ -372,7 +373,7 @@ class HoofdVenster(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Ethernet Messenger — CCNA Lab Tool")
-        self.resize(760, 900)
+        self.resize(760, 720)
 
         self.sniffer_thread: SnifferThread | None = None
         self.sniffer_signals = SnifferSignals()
@@ -400,7 +401,8 @@ class HoofdVenster(QMainWindow):
         self.root_waarschuwing.hide()
         layout.addWidget(self.root_waarschuwing)
 
-        # Interface-selectie
+        # Interface-selectie — geldt zowel voor verzenden als ontvangen,
+        # daarom buiten de tabbladen geplaatst.
         iface_group = QGroupBox("Netwerkinterface")
         iface_layout = QFormLayout()
         self.iface_combo = QComboBox()
@@ -408,6 +410,15 @@ class HoofdVenster(QMainWindow):
         iface_layout.addRow("Interface:", self.iface_combo)
         iface_group.setLayout(iface_layout)
         layout.addWidget(iface_group)
+
+        tabs = QTabWidget()
+        layout.addWidget(tabs)
+        tabs.addTab(self._bouw_verzenden_tab(), "Verzenden")
+        tabs.addTab(self._bouw_ontvangen_tab(), "Ontvangen")
+
+    def _bouw_verzenden_tab(self):
+        tab = QWidget()
+        tab_layout = QVBoxLayout(tab)
 
         # Frame-opbouw
         frame_group = QGroupBox("Ethernet frame opbouwen")
@@ -433,7 +444,7 @@ class HoofdVenster(QMainWindow):
         frame_layout.addRow("Payload:", self.payload_edit)
 
         frame_group.setLayout(frame_layout)
-        layout.addWidget(frame_group)
+        tab_layout.addWidget(frame_group)
 
         # Live visuele weergave van het op te bouwen frame
         visualisatie_group = QGroupBox("Visuele weergave van het frame (live)")
@@ -451,7 +462,7 @@ class HoofdVenster(QMainWindow):
         visualisatie_uitleg.setStyleSheet("color: #666666; font-size: 11px;")
         visualisatie_layout.addWidget(visualisatie_uitleg)
         visualisatie_group.setLayout(visualisatie_layout)
-        layout.addWidget(visualisatie_group)
+        tab_layout.addWidget(visualisatie_group)
 
         self.dst_mac_edit.textChanged.connect(self._bijwerken_visualisatie)
         self.src_mac_edit.textChanged.connect(self._bijwerken_visualisatie)
@@ -461,9 +472,14 @@ class HoofdVenster(QMainWindow):
         # Verstuurknop
         verstuur_knop = QPushButton("Frame versturen")
         verstuur_knop.clicked.connect(self._verstuur_frame)
-        layout.addWidget(verstuur_knop)
+        tab_layout.addWidget(verstuur_knop)
 
-        # Sniffer sectie
+        return tab
+
+    def _bouw_ontvangen_tab(self):
+        tab = QWidget()
+        tab_layout = QVBoxLayout(tab)
+
         sniffer_group = QGroupBox("Live sniffer")
         sniffer_layout = QVBoxLayout()
 
@@ -497,7 +513,7 @@ class HoofdVenster(QMainWindow):
         sniffer_layout.addWidget(wis_knop)
 
         sniffer_group.setLayout(sniffer_layout)
-        layout.addWidget(sniffer_group)
+        tab_layout.addWidget(sniffer_group)
 
         self.ontvangst_visualisatie.toon_frame(
             dst_mac="-",
@@ -507,6 +523,8 @@ class HoofdVenster(QMainWindow):
             payload_tekst="(nog geen frame ontvangen)",
             data_bytes=b"\x00" * MIN_DATA_BYTES,
         )
+
+        return tab
 
     # ------------------------------------------------------------------
     # Root-rechten controle
