@@ -181,3 +181,11 @@ ernaast te laten meekijken op hetzelfde labsegment.
 - Frames met een EtherType lager dan `0x0600` worden door sommige
   netwerkkaarten/drivers als IEEE 802.3-lengteveld geïnterpreteerd in
   plaats van als EtherType; gebruik bij voorkeur waarden vanaf `0x0600`.
+
+## Herkomst
+
+Deze applicatie is gebouwd door de docent (Mondriaan ICT, GitHub: `skysoft`)
+in samenwerking met [Claude Code](https://claude.com/claude-code), Anthropic's
+AI-coding-assistent. Wie wil weten hoe de applicatie stap voor stap tot
+stand is gekomen — welke verzoeken tot welke wijzigingen hebben geleid —
+kan dat teruglezen in [`CONVERSATION.md`](CONVERSATION.md).
