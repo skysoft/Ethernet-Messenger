@@ -865,7 +865,7 @@ class HoofdVenster(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     venster = HoofdVenster()
-    venster.show()
+    venster.showMaximized()
     sys.exit(app.exec())
 
 
