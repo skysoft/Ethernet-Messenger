@@ -29,6 +29,13 @@ zien hoe Ethernet framing, MAC-adressering en EtherType werken.
   ontvangen frame wordt in mensleesbare vorm gedecodeerd: destination MAC
   (met classificatie unicast/multicast/broadcast), source MAC, EtherType,
   framegrootte, en de payload als zowel tekst als hexadecimale bytes.
+- De payload wordt bij verzending voorafgegaan door een 2-byte lengteveld,
+  zodat de ontvanger altijd exact de ingetypte tekst kan tonen. Ethernet
+  vult frames die korter zijn dan de minimale framegrootte (60 bytes
+  exclusief FCS) automatisch aan met nulbytes; dankzij het lengteveld
+  herkent de ontvanger die padding en toont hij alleen het aantal
+  verborgen paddingbytes, in plaats van de nulbytes zelf te tonen als
+  onduidelijke "rommel" achter de payload.
 - Duidelijke foutafhandeling: waarschuwing wanneer het programma niet als
   root draait, met instructies om dit op te lossen.
 

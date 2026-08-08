@@ -14,6 +14,7 @@ of een geïsoleerd VLAN), niet voor productienetwerken.
 """
 
 import os
+import struct
 import sys
 import threading
 import time
@@ -87,6 +88,39 @@ def classify_mac(mac):
     return "unicast"
 
 
+def bouw_payload_bytes(tekst):
+    """
+    Zet de ingetypte payloadtekst om in bytes, voorafgegaan door een
+    2-byte lengteveld. Ethernet vult frames die korter zijn dan de
+    minimale framegrootte (60 bytes exclusief FCS) automatisch aan met
+    nulbytes (padding). Zonder een expliciet lengteveld zou die padding
+    bij ontvangst niet te onderscheiden zijn van de echte payload; met
+    het lengteveld kan de ontvanger precies de ingetypte tekst
+    terugvinden en de padding herkennen en verbergen.
+    """
+    inhoud = tekst.encode("utf-8")
+    return struct.pack("!H", len(inhoud)) + inhoud
+
+
+def ontleed_payload(raw: bytes):
+    """
+    Ontleedt de ruwe payload van een ontvangen frame op basis van het
+    2-byte lengteveld dat bouw_payload_bytes() ervoor plaatst.
+    Retourneert (werkelijke_payload_bytes, aantal_paddingbytes).
+    """
+    if len(raw) < 2:
+        return raw, 0
+    (opgegeven_lengte,) = struct.unpack("!H", raw[:2])
+    inhoud = raw[2:]
+    if opgegeven_lengte > len(inhoud):
+        # Onverwacht frame (niet verzonden door deze applicatie): geen
+        # aannames doen over padding, gewoon alles tonen.
+        return inhoud, 0
+    werkelijke_payload = inhoud[:opgegeven_lengte]
+    padding_lengte = len(inhoud) - opgegeven_lengte
+    return werkelijke_payload, padding_lengte
+
+
 def get_readable_interfaces():
     """
     Geeft een lijst van (leesbare_naam, scapy_interface_naam) terug voor
@@ -155,15 +189,23 @@ class SnifferThread(threading.Thread):
 
         tijd = time.strftime("%H:%M:%S")
         lengte = len(pkt)
-        payload = bytes(eth.payload)
+        raw_payload = bytes(eth.payload)
+        werkelijke_payload, padding_lengte = ontleed_payload(raw_payload)
         try:
-            payload_str = payload.decode("utf-8", errors="replace")
+            payload_str = werkelijke_payload.decode("utf-8", errors="replace")
         except Exception:
-            payload_str = repr(payload)
-        payload_hex = payload.hex(" ")
+            payload_str = repr(werkelijke_payload)
+        payload_hex = werkelijke_payload.hex(" ")
 
         dst_type = classify_mac(eth.dst)
         src_type = classify_mac(eth.src)
+
+        padding_regel = ""
+        if padding_lengte:
+            padding_regel = (
+                f"\n  Padding         : {padding_lengte} bytes (niet getoond — "
+                f"Ethernet vult het frame aan tot de minimale framegrootte)"
+            )
 
         regel = (
             f"────────────────────────────────────────────\n"
@@ -174,6 +216,7 @@ class SnifferThread(threading.Thread):
             f"  Framegrootte    : {lengte} bytes\n"
             f"  Payload (tekst) : {payload_str!r}\n"
             f"  Payload (hex)   : {payload_hex}"
+            f"{padding_regel}"
         )
         self.signals.frame_ontvangen.emit(regel)
 
@@ -344,7 +387,7 @@ class HoofdVenster(QMainWindow):
             return
 
         try:
-            frame = Ether(dst=dst_mac, src=src_mac or None, type=DEFAULT_ETHERTYPE) / payload_tekst.encode("utf-8")
+            frame = Ether(dst=dst_mac, src=src_mac or None, type=DEFAULT_ETHERTYPE) / bouw_payload_bytes(payload_tekst)
             sendp(frame, iface=iface_name, verbose=False)
             self._log(
                 f"[VERZONDEN] src={frame.src} dst={frame.dst} "
