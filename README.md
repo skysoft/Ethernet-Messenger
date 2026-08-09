@@ -31,12 +31,9 @@ zien hoe Ethernet framing, MAC-adressering en EtherType werken.
   (vast EtherType `0x88B5`). Vanaf Mode-B verschijnt er in plaats van het
   vaste EtherType-label een keuzelijst met extra protocollen (Mode-B:
   + ARP, Mode-C: + IPv4, Mode-D: + IPv6). Ethernet én ARP kunnen
-  daadwerkelijk verzonden worden; IPv4/IPv6 staan er voorlopig alleen
-  ter illustratie bij (nog niet functioneel — dat komt in een latere
-  fase). Ontvangen frames blijven, ongeacht de gekozen modus, altijd
-  gefilterd op EtherType `0x88B5`: verzonden ARP-frames zijn dus wel op
-  de kabel te zien (bijv. met Wireshark) maar nog niet in de sniffer
-  van deze applicatie.
+  daadwerkelijk verzonden en ontvangen worden; IPv4/IPv6 staan er
+  voorlopig alleen ter illustratie bij (nog niet functioneel — dat komt
+  in een latere fase).
 - **ARP opbouwen (Mode-B en hoger, EtherType ARP gekozen)**: onder de
   EtherType-keuzelijst verschijnen dan twee extra velden: "Soort ARP"
   ("Verzend ARP aanvraag" of "Verzend ARP antwoord") en een vrij
@@ -51,8 +48,19 @@ zien hoe Ethernet framing, MAC-adressering en EtherType werken.
     wordt `IP-adres <IP> hoort bij mij.`
 
   Dit is een **leesbare pseudo-ARP-tekst** ter illustratie van wat een
-  ARP-bericht betekent, geen bit-exacte reconstructie van de echte
-  (binaire) ARP-pakketstructuur uit RFC 826.
+  ARP-bericht betekent — puur in de visualisatie. Het frame dat
+  daadwerkelijk over de kabel gaat is een **echt, geldig ARP-pakket**
+  (RFC 826, via Scapy's `ARP()`-laag), zodat Wireshark en echte
+  netwerkstacks het ook als ARP herkennen. De student hoeft die binaire
+  opbouw niet te zien; de leesbare tekst in de visualisatie is de
+  "vertaling" ervan.
+- **ARP ontvangen (Mode-B en hoger)**: op het tabblad Ontvangen
+  verschijnt dan een keuzelijst "EtherType om te sniffen" (Ethernet of
+  ARP) boven de sniffer-checkbox. Bij ARP toont de sniffer al het
+  ARP-verkeer op het netwerksegment — dus van **alle** apparaten, niet
+  alleen van je labpartner, wat op een live netwerk normaal is. Elk
+  ontvangen (echt, binair) ARP-pakket wordt teruggezet naar diezelfde
+  leesbare pseudo-ARP-tekst als aan de verzendkant.
 - Ethernet frame opbouwen: source MAC (auto-ingevuld, aanpasbaar),
   destination MAC (met snelknop voor broadcast `ff:ff:ff:ff:ff:ff`),
   EtherType (in Mode-A vast op `0x88B5`), vrije tekst payload.

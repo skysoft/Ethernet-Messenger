@@ -49,7 +49,7 @@ from PyQt6.QtWidgets import (
 )
 
 try:
-    from scapy.all import Ether, sendp, sniff, get_if_list, get_if_hwaddr, conf, wrpcap
+    from scapy.all import Ether, ARP, sendp, sniff, get_if_list, get_if_hwaddr, conf, wrpcap
 except ImportError:
     print(
         "Scapy is niet geïnstalleerd. Installeer het met:\n"
@@ -61,7 +61,6 @@ except ImportError:
 
 DEFAULT_ETHERTYPE = 0x88B5  # gereserveerd voor experimenteel/onderwijsgebruik
 ARP_ETHERTYPE = 0x0806
-BPF_ETHERTYPE_FILTER = f"ether proto {DEFAULT_ETHERTYPE:#06x}"
 BROADCAST_MAC = "ff:ff:ff:ff:ff:ff"
 MIN_DATA_BYTES = 46  # minimale grootte van het Data-veld (Ethernet-norm)
 
@@ -184,6 +183,20 @@ def bereken_dummy_fcs(dst_mac, src_mac, ethertype, data_bytes):
     return checksum.to_bytes(4, "big")
 
 
+def arp_bericht_tekst(is_antwoord, ip):
+    """
+    Zet een ARP-betekenis (aanvraag/antwoord + IP-adres) om in dezelfde
+    leesbare pseudo-ARP-tekst, of dat nu voor de opbouw van een te
+    verzenden frame is (op basis van de ingevulde velden) of voor een
+    daadwerkelijk ontvangen ARP-pakket (op basis van de uitgelezen
+    ARP-laag) — zo blijft de weergave overal consistent.
+    """
+    ip = ip or "?"
+    if is_antwoord:
+        return f"IP-adres {ip} hoort bij mij."
+    return f"Wie heeft IP adres {ip}, vertel het mij."
+
+
 def get_readable_interfaces():
     """
     Geeft een lijst van (leesbare_naam, scapy_interface_naam) terug voor
@@ -218,10 +231,12 @@ class SnifferSignals(QObject):
 class SnifferThread(threading.Thread):
     """Sniffer die in een aparte thread draait zodat de GUI niet blokkeert."""
 
-    def __init__(self, iface, signals: SnifferSignals):
+    def __init__(self, iface, signals: SnifferSignals, ethertype=DEFAULT_ETHERTYPE):
         super().__init__(daemon=True)
         self.iface = iface
         self.signals = signals
+        self.ethertype = ethertype
+        self.bpf_filter = f"ether proto {ethertype:#06x}"
         self._stop_event = threading.Event()
         # Lokale raw-socket capture (Scapy/libpcap) vangt op Linux zowel
         # inkomend áls zelf verzonden verkeer op dezelfde interface af —
@@ -239,13 +254,13 @@ class SnifferThread(threading.Thread):
         try:
             # sniff() met timeout stopt na 1s als er geen packets zijn;
             # blijf herstarten totdat stop() is aangeroepen. Het BPF-filter
-            # zorgt dat alleen frames met EtherType 0x88B5 worden getoond —
-            # zo blijft het logvenster overzichtelijk tussen alle overige
-            # verkeer (ARP, IPv4/IPv6, STP, LLDP, ...) op het segment.
+            # zorgt dat alleen frames met het gekozen EtherType worden
+            # getoond — zo blijft het logvenster overzichtelijk tussen
+            # alle overige verkeer op het segment.
             while not self._stop_event.is_set():
                 sniff(
                     iface=self.iface,
-                    filter=BPF_ETHERTYPE_FILTER,
+                    filter=self.bpf_filter,
                     prn=self._verwerk_frame,
                     store=False,
                     stop_filter=lambda pkt: self._stop_event.is_set(),
@@ -258,22 +273,34 @@ class SnifferThread(threading.Thread):
         if not pkt.haslayer(Ether):
             return
         eth = pkt[Ether]
-        if eth.type != DEFAULT_ETHERTYPE:
+        if eth.type != self.ethertype:
             return  # extra vangnet naast het BPF-filter
         if self.eigen_mac and eth.src.lower() == self.eigen_mac.lower():
             return  # eigen uitgaand frame, geen "echt" ontvangen verkeer
 
         raw_payload = bytes(eth.payload)
-        werkelijke_payload, _ = ontleed_payload(raw_payload)
-        try:
-            payload_str = werkelijke_payload.decode("utf-8", errors="replace")
-        except Exception:
-            payload_str = repr(werkelijke_payload)
+
+        if self.ethertype == ARP_ETHERTYPE:
+            # Een echt ARP-pakket volgt niet ons eigen lengteveld-schema
+            # (dat is alleen voor onze eigen Ethernet-tekstframes); het
+            # wordt hier vertaald naar dezelfde leesbare pseudo-ARP-tekst
+            # als aan de verzendkant.
+            if not pkt.haslayer(ARP):
+                return
+            arp_laag = pkt[ARP]
+            is_antwoord = arp_laag.op == 2
+            ip = arp_laag.psrc if is_antwoord else arp_laag.pdst
+            payload_str = arp_bericht_tekst(is_antwoord, ip)
+        else:
+            werkelijke_payload, _ = ontleed_payload(raw_payload)
+            try:
+                payload_str = werkelijke_payload.decode("utf-8", errors="replace")
+            except Exception:
+                payload_str = repr(werkelijke_payload)
 
         # raw_payload is de volledige, ongewijzigde inhoud van het
-        # Data-veld zoals die over de kabel is gekomen (lengteveld +
-        # tekst + eventuele padding) — hiermee kan de ontvanger dezelfde
-        # visuele framerepresentatie tonen als de verzender.
+        # Data-veld zoals die over de kabel is gekomen — hiermee kan de
+        # visualisatie de echte framegrootte en FCS tonen.
         frame_info = {
             "dst_mac": eth.dst,
             "src_mac": eth.src,
@@ -664,6 +691,28 @@ class HoofdVenster(QMainWindow):
         sniffer_group = QGroupBox("Live sniffer")
         sniffer_layout = QVBoxLayout()
 
+        # EtherType om te sniffen — alleen zichtbaar vanaf Mode-B, waar
+        # ARP als optie beschikbaar komt (zie _toepassen_modus). In
+        # Mode-A blijft dit onzichtbaar en wordt altijd Ethernet
+        # (0x88B5) gesniffed, zoals voorheen.
+        self.ontvangst_ethertype_widget = QWidget()
+        ontvangst_ethertype_layout = QFormLayout(self.ontvangst_ethertype_widget)
+        ontvangst_ethertype_layout.setContentsMargins(0, 0, 0, 0)
+        self.ontvangst_ethertype_combo = QComboBox()
+        self.ontvangst_ethertype_combo.addItem("Ethernet (0x88B5)", DEFAULT_ETHERTYPE)
+        self.ontvangst_ethertype_combo.addItem("ARP (0x0806)", ARP_ETHERTYPE)
+        ontvangst_ethertype_layout.addRow("EtherType om te sniffen:", self.ontvangst_ethertype_combo)
+        ontvangst_ethertype_uitleg = QLabel(
+            "Let op: bij ARP wordt al het ARP-verkeer op dit "
+            "netwerksegment getoond (van alle apparaten, niet alleen "
+            "van je labpartner) — normaal in een lab-opstelling."
+        )
+        ontvangst_ethertype_uitleg.setWordWrap(True)
+        ontvangst_ethertype_uitleg.setStyleSheet("color: #666666; font-size: 11px;")
+        ontvangst_ethertype_layout.addRow(ontvangst_ethertype_uitleg)
+        self.ontvangst_ethertype_widget.setVisible(False)
+        sniffer_layout.addWidget(self.ontvangst_ethertype_widget)
+
         self.sniffer_checkbox = QCheckBox("Sniffer inschakelen")
         self.sniffer_checkbox.stateChanged.connect(self._sniffer_omschakelen)
         sniffer_layout.addWidget(self.sniffer_checkbox)
@@ -674,10 +723,8 @@ class HoofdVenster(QMainWindow):
         # binnengekomen, wordt er geen frame-inhoud getoond (geen nep
         # Preamble/Type/FCS).
         self.ontvangst_visualisatie = FrameVisualisatieWidget()
-        self.ontvangst_visualisatie.toon_leeg(
-            "Nog geen frame ontvangen — schakel de sniffer in en wacht op "
-            "inkomend verkeer met EtherType 0x88B5."
-        )
+        self.ontvangst_visualisatie.toon_leeg(self._leeg_bericht_tekst())
+        self.ontvangst_ethertype_combo.currentIndexChanged.connect(self._ontvangst_ethertype_gewijzigd)
         sniffer_layout.addWidget(self.ontvangst_visualisatie)
         sniffer_layout.addSpacing(8)
         ontvangst_uitleg = QLabel(
@@ -821,6 +868,7 @@ class HoofdVenster(QMainWindow):
             self._actief_ethertype = protocollen[0][1]
             self.ethertype_stack.setCurrentWidget(self.protocol_combo)
         self._modus_status_label.setText(f"Modus: {MODUS_OMSCHRIJVING[modus_sleutel]}")
+        self.ontvangst_ethertype_widget.setVisible(modus_sleutel != "Mode-A")
         self._bijwerken_arp_status()
 
     def _protocol_gewijzigd(self, index):
@@ -839,11 +887,25 @@ class HoofdVenster(QMainWindow):
         self._bijwerken_arp_status()
 
     def _arp_payload_tekst(self):
-        ip = self.arp_ip_edit.text().strip() or "?"
-        soort = self.arp_soort_combo.currentData()
-        if soort == "antwoord":
-            return f"IP-adres {ip} hoort bij mij."
-        return f"Wie heeft IP adres {ip}, vertel het mij."
+        ip = self.arp_ip_edit.text().strip()
+        is_antwoord = self.arp_soort_combo.currentData() == "antwoord"
+        return arp_bericht_tekst(is_antwoord, ip)
+
+    def _bouw_echt_arp_frame(self, dst_mac, src_mac):
+        """
+        Bouwt het daadwerkelijk te verzenden ARP-pakket op (geldige
+        RFC 826-structuur via Scapy's ARP-laag), los van de leesbare
+        pseudo-ARP-tekst die alleen in de visualisatie te zien is. Niet
+        alle velden (bijv. het eigen IP-adres) zijn bij deze applicatie
+        bekend — die worden zo goed mogelijk ingevuld (0.0.0.0), zonder
+        dat dat afbreuk doet aan de geldigheid van het pakket.
+        """
+        ip = self.arp_ip_edit.text().strip()
+        if self.arp_soort_combo.currentData() == "antwoord":
+            arp_laag = ARP(op=2, hwsrc=src_mac or None, psrc=ip, hwdst=dst_mac, pdst="0.0.0.0")
+        else:
+            arp_laag = ARP(op=1, hwsrc=src_mac or None, psrc="0.0.0.0", pdst=ip)
+        return Ether(dst=dst_mac, src=src_mac or None, type=ARP_ETHERTYPE) / arp_laag
 
     def _bijwerken_arp_status(self):
         """
@@ -926,7 +988,16 @@ class HoofdVenster(QMainWindow):
             return
 
         try:
-            frame = Ether(dst=dst_mac, src=src_mac or None, type=self._actief_ethertype) / bouw_payload_bytes(payload_tekst)
+            if self._actief_ethertype == ARP_ETHERTYPE:
+                # De visualisatie toont een leesbare pseudo-ARP-tekst,
+                # maar wat daadwerkelijk over de kabel gaat moet een
+                # geldig ARP-pakket zijn (RFC 826) — anders herkennen
+                # Wireshark en echte netwerkstacks het niet als ARP. De
+                # student hoeft deze binaire opbouw niet te zien; de
+                # visualisatie hierboven is daarvoor de "vertaling".
+                frame = self._bouw_echt_arp_frame(dst_mac, src_mac)
+            else:
+                frame = Ether(dst=dst_mac, src=src_mac or None, type=self._actief_ethertype) / bouw_payload_bytes(payload_tekst)
             sendp(frame, iface=iface_name, verbose=False)
             self._log(
                 f"[VERZONDEN] src={frame.src} dst={frame.dst} "
@@ -962,10 +1033,16 @@ class HoofdVenster(QMainWindow):
         if self.sniffer_thread is not None:
             return
 
-        self.sniffer_thread = SnifferThread(iface_name, self.sniffer_signals)
+        ethertype = (
+            self.ontvangst_ethertype_combo.currentData()
+            if self.ontvangst_ethertype_widget.isVisible()
+            else DEFAULT_ETHERTYPE
+        )
+        self.sniffer_thread = SnifferThread(iface_name, self.sniffer_signals, ethertype=ethertype)
         try:
             self.sniffer_thread.start()
-            self._log(f"[SNIFFER] Gestart op interface {iface_name}.")
+            self.ontvangst_ethertype_combo.setEnabled(False)
+            self._log(f"[SNIFFER] Gestart op interface {iface_name} (EtherType 0x{ethertype:04X}).")
         except PermissionError:
             QMessageBox.critical(
                 self,
@@ -981,6 +1058,7 @@ class HoofdVenster(QMainWindow):
         if self.sniffer_thread is not None:
             self.sniffer_thread.stop()
             self.sniffer_thread = None
+            self.ontvangst_ethertype_combo.setEnabled(True)
             self._log("[SNIFFER] Gestopt.")
 
     def _toon_ontvangen_frame(self, frame_info: dict):
@@ -1015,12 +1093,24 @@ class HoofdVenster(QMainWindow):
             data_bytes=frame_info["data_bytes"],
         )
 
+    def _ontvangst_ethertype_gewijzigd(self, index):
+        if self.frame_lijst.count() == 0:
+            self.ontvangst_visualisatie.toon_leeg(self._leeg_bericht_tekst())
+
+    def _leeg_bericht_tekst(self):
+        ethertype = (
+            self.ontvangst_ethertype_combo.currentData()
+            if self.ontvangst_ethertype_widget.isVisible()
+            else DEFAULT_ETHERTYPE
+        )
+        return (
+            "Nog geen frame ontvangen — schakel de sniffer in en wacht op "
+            f"inkomend verkeer met EtherType 0x{ethertype:04X}."
+        )
+
     def _wis_frame_geschiedenis(self):
         self.frame_lijst.clear()
-        self.ontvangst_visualisatie.toon_leeg(
-            "Nog geen frame ontvangen — schakel de sniffer in en wacht op "
-            "inkomend verkeer met EtherType 0x88B5."
-        )
+        self.ontvangst_visualisatie.toon_leeg(self._leeg_bericht_tekst())
 
     def _open_in_wireshark(self):
         item = self.frame_lijst.currentItem()
