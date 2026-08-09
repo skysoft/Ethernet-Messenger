@@ -624,6 +624,10 @@ class HoofdVenster(QMainWindow):
         self.frame_lijst.currentRowChanged.connect(self._frame_geschiedenis_geselecteerd)
         sniffer_layout.addWidget(self.frame_lijst)
 
+        lijst_wis_knop = QPushButton("Lijst wissen")
+        lijst_wis_knop.clicked.connect(self._wis_frame_geschiedenis)
+        sniffer_layout.addWidget(lijst_wis_knop)
+
         self.log_venster = QTextEdit()
         self.log_venster.setReadOnly(True)
         self.log_venster.setStyleSheet("font-family: monospace;")
@@ -858,6 +862,13 @@ class HoofdVenster(QMainWindow):
             ethertype_int=frame_info["ethertype_int"],
             payload_tekst=frame_info["payload_tekst"],
             data_bytes=frame_info["data_bytes"],
+        )
+
+    def _wis_frame_geschiedenis(self):
+        self.frame_lijst.clear()
+        self.ontvangst_visualisatie.toon_leeg(
+            "Nog geen frame ontvangen — schakel de sniffer in en wacht op "
+            "inkomend verkeer met EtherType 0x88B5."
         )
 
     def _toon_sniffer_fout(self, foutmelding: str):

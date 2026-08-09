@@ -71,8 +71,9 @@ zien hoe Ethernet framing, MAC-adressering en EtherType werken.
   visualisatie is **exact dezelfde weergave** als aan de verzendkant —
   inclusief een FCS die opnieuw berekend is uit de ontvangen inhoud —
   zodat de verzendende en ontvangende student precies hetzelfde frame
-  zien. Een klein logvenster eronder houdt een beknopte, doorlopende
-  geschiedenis bij (met tijdstip).
+  zien. Met "Lijst wissen" leeg je de geschiedenis (de visualisatie
+  keert dan terug naar de lege staat). Een klein logvenster eronder
+  houdt een beknopte, doorlopende geschiedenis bij (met tijdstip).
 - De payload wordt bij verzending voorafgegaan door een 2-byte lengteveld,
   zodat de ontvanger altijd exact de ingetypte tekst kan reconstrueren.
   Ethernet vult frames die korter zijn dan de minimale framegrootte
