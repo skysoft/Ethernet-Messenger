@@ -74,6 +74,13 @@ zien hoe Ethernet framing, MAC-adressering en EtherType werken.
   zien. Met "Lijst wissen" leeg je de geschiedenis (de visualisatie
   keert dan terug naar de lege staat). Een klein logvenster eronder
   houdt een beknopte, doorlopende geschiedenis bij (met tijdstip).
+- **"Open geselecteerd frame in Wireshark"**: schrijft het in de lijst
+  geselecteerde frame weg als tijdelijk `.pcap`-bestand (via Scapy's
+  `wrpcap()`) en opent dat direct in Wireshark (`wireshark -r <bestand>`),
+  zodat studenten hetzelfde frame ook met de vertrouwde protocol-analyse
+  van Wireshark kunnen bekijken. Vereist dat Wireshark op het systeem
+  geïnstalleerd is (`sudo apt install wireshark`); zo niet, dan toont de
+  applicatie een duidelijke foutmelding met installatie-instructie.
 - De payload wordt bij verzending voorafgegaan door een 2-byte lengteveld,
   zodat de ontvanger altijd exact de ingetypte tekst kan reconstrueren.
   Ethernet vult frames die korter zijn dan de minimale framegrootte
@@ -90,6 +97,8 @@ zien hoe Ethernet framing, MAC-adressering en EtherType werken.
 - PyQt6
 - Scapy
 - Root-rechten (of `setcap`-configuratie) voor raw sockets
+- Wireshark (optioneel, voor de knop "Open geselecteerd frame in
+  Wireshark"): `sudo apt install wireshark`
 
 ## Installatie op Debian 13
 

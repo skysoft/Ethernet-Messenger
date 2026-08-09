@@ -16,7 +16,9 @@ of een geïsoleerd VLAN), niet voor productienetwerken.
 import os
 import re
 import struct
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 import zlib
@@ -46,7 +48,7 @@ from PyQt6.QtWidgets import (
 )
 
 try:
-    from scapy.all import Ether, sendp, sniff, get_if_list, get_if_hwaddr, conf
+    from scapy.all import Ether, sendp, sniff, get_if_list, get_if_hwaddr, conf, wrpcap
 except ImportError:
     print(
         "Scapy is niet geïnstalleerd. Installeer het met:\n"
@@ -624,9 +626,14 @@ class HoofdVenster(QMainWindow):
         self.frame_lijst.currentRowChanged.connect(self._frame_geschiedenis_geselecteerd)
         sniffer_layout.addWidget(self.frame_lijst)
 
+        lijst_knoppen = QHBoxLayout()
         lijst_wis_knop = QPushButton("Lijst wissen")
         lijst_wis_knop.clicked.connect(self._wis_frame_geschiedenis)
-        sniffer_layout.addWidget(lijst_wis_knop)
+        lijst_knoppen.addWidget(lijst_wis_knop)
+        wireshark_knop = QPushButton("Open geselecteerd frame in Wireshark")
+        wireshark_knop.clicked.connect(self._open_in_wireshark)
+        lijst_knoppen.addWidget(wireshark_knop)
+        sniffer_layout.addLayout(lijst_knoppen)
 
         self.log_venster = QTextEdit()
         self.log_venster.setReadOnly(True)
@@ -870,6 +877,46 @@ class HoofdVenster(QMainWindow):
             "Nog geen frame ontvangen — schakel de sniffer in en wacht op "
             "inkomend verkeer met EtherType 0x88B5."
         )
+
+    def _open_in_wireshark(self):
+        item = self.frame_lijst.currentItem()
+        if item is None:
+            QMessageBox.information(
+                self,
+                "Geen frame geselecteerd",
+                "Selecteer eerst een frame in de lijst hierboven.",
+            )
+            return
+
+        frame_info = item.data(Qt.ItemDataRole.UserRole)
+        frame = Ether(
+            dst=frame_info["dst_mac"],
+            src=frame_info["src_mac"],
+            type=frame_info["ethertype_int"],
+        ) / frame_info["data_bytes"]
+
+        try:
+            with tempfile.NamedTemporaryFile(
+                prefix="ethernet_messenger_", suffix=".pcap", delete=False
+            ) as tmp:
+                pcap_pad = tmp.name
+            wrpcap(pcap_pad, [frame])
+        except Exception as e:
+            QMessageBox.critical(self, "Fout", f"Kon geen pcap-bestand aanmaken: {e}")
+            return
+
+        try:
+            subprocess.Popen(["wireshark", "-r", pcap_pad])
+        except FileNotFoundError:
+            QMessageBox.critical(
+                self,
+                "Wireshark niet gevonden",
+                "Wireshark kon niet gestart worden. Installeer het met:\n"
+                "  sudo apt install wireshark\n\n"
+                f"Het frame is wel opgeslagen als:\n{pcap_pad}",
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Fout bij starten van Wireshark", f"Er ging iets mis: {e}")
 
     def _toon_sniffer_fout(self, foutmelding: str):
         self._log(f"[FOUT] {foutmelding}")
