@@ -49,7 +49,7 @@ from PyQt6.QtWidgets import (
 )
 
 try:
-    from scapy.all import Ether, ARP, sendp, sniff, get_if_list, get_if_hwaddr, conf, wrpcap
+    from scapy.all import Ether, ARP, IP, sendp, sniff, get_if_list, get_if_hwaddr, get_if_addr, conf, wrpcap
 except ImportError:
     print(
         "Scapy is niet geïnstalleerd. Installeer het met:\n"
@@ -61,27 +61,30 @@ except ImportError:
 
 DEFAULT_ETHERTYPE = 0x88B5  # gereserveerd voor experimenteel/onderwijsgebruik
 ARP_ETHERTYPE = 0x0806
+IPV4_ETHERTYPE = 0x0800
+IPV4_CUSTOM_PROTO = 253  # gereserveerd voor experimenteel/testgebruik (RFC 3692)
 BROADCAST_MAC = "ff:ff:ff:ff:ff:ff"
 MIN_DATA_BYTES = 46  # minimale grootte van het Data-veld (Ethernet-norm)
 
 # Modi: elke volgende modus voegt protocol-opties toe aan de te kiezen
-# EtherType bij het opbouwen van een frame. Ethernet en ARP zijn
-# functioneel uitgewerkt (ARP als leesbare pseudo-ARP-tekst i.p.v. de
-# echte binaire ARP-structuur — zie _arp_payload_tekst); IPv4/IPv6
-# staan er voorlopig alleen ter illustratie bij, worden in een latere
-# fase functioneel uitgewerkt.
+# EtherType bij het opbouwen van een frame. Ethernet, ARP en IPv4 zijn
+# functioneel uitgewerkt (ARP als leesbare pseudo-ARP-tekst, zie
+# _arp_payload_tekst; IPv4 als een echt, geldig IP-pakket met een
+# experimenteel protocolnummer, zie _bouw_echt_ipv4_frame); IPv6 staat
+# er voorlopig alleen ter illustratie bij, wordt in een latere fase
+# functioneel uitgewerkt.
 MODUS_PROTOCOLLEN = {
     "Mode-A": [("Ethernet (0x88B5)", DEFAULT_ETHERTYPE)],
     "Mode-B": [("Ethernet (0x88B5)", DEFAULT_ETHERTYPE), ("ARP (0x0806)", ARP_ETHERTYPE)],
     "Mode-C": [
         ("Ethernet (0x88B5)", DEFAULT_ETHERTYPE),
         ("ARP (0x0806)", ARP_ETHERTYPE),
-        ("IPv4 (0x0800)", 0x0800),
+        ("IPv4 (0x0800)", IPV4_ETHERTYPE),
     ],
     "Mode-D": [
         ("Ethernet (0x88B5)", DEFAULT_ETHERTYPE),
         ("ARP (0x0806)", ARP_ETHERTYPE),
-        ("IPv4 (0x0800)", 0x0800),
+        ("IPv4 (0x0800)", IPV4_ETHERTYPE),
         ("IPv6 (0x86DD)", 0x86DD),
     ],
 }
@@ -90,6 +93,25 @@ MODUS_OMSCHRIJVING = {
     "Mode-B": "Mode-B — Ethernet + ARP",
     "Mode-C": "Mode-C — Ethernet + ARP + IPv4",
     "Mode-D": "Mode-D — Ethernet + ARP + IPv4 + IPv6",
+}
+
+# Welke EtherTypes de ontvangstkant (sniffer) daadwerkelijk kan
+# decoderen, per modus. IPv6 staat nog niet in deze lijst (nog geen
+# decodering gebouwd), ook niet in Mode-D — dat is een bewuste,
+# stapsgewijze beperking.
+ONTVANGST_ETHERTYPES = {
+    "Mode-A": [("Ethernet (0x88B5)", DEFAULT_ETHERTYPE)],
+    "Mode-B": [("Ethernet (0x88B5)", DEFAULT_ETHERTYPE), ("ARP (0x0806)", ARP_ETHERTYPE)],
+    "Mode-C": [
+        ("Ethernet (0x88B5)", DEFAULT_ETHERTYPE),
+        ("ARP (0x0806)", ARP_ETHERTYPE),
+        ("IPv4 (0x0800)", IPV4_ETHERTYPE),
+    ],
+    "Mode-D": [
+        ("Ethernet (0x88B5)", DEFAULT_ETHERTYPE),
+        ("ARP (0x0806)", ARP_ETHERTYPE),
+        ("IPv4 (0x0800)", IPV4_ETHERTYPE),
+    ],
 }
 
 
@@ -279,6 +301,7 @@ class SnifferThread(threading.Thread):
             return  # eigen uitgaand frame, geen "echt" ontvangen verkeer
 
         raw_payload = bytes(eth.payload)
+        ip_info = None
 
         if self.ethertype == ARP_ETHERTYPE:
             # Een echt ARP-pakket volgt niet ons eigen lengteveld-schema
@@ -291,6 +314,20 @@ class SnifferThread(threading.Thread):
             is_antwoord = arp_laag.op == 2
             ip = arp_laag.psrc if is_antwoord else arp_laag.pdst
             payload_str = arp_bericht_tekst(is_antwoord, ip)
+        elif self.ethertype == IPV4_ETHERTYPE:
+            # Een echt IP-pakket; de payload erin is bij onze eigen
+            # verzonden berichten gewoon leesbare UTF-8-tekst (zie
+            # _bouw_echt_ipv4_frame), maar bij "echt" netwerkverkeer van
+            # andere toepassingen kan dit binaire data zijn — vandaar de
+            # foutentolerante decodering.
+            if not pkt.haslayer(IP):
+                return
+            ip_laag = pkt[IP]
+            try:
+                payload_str = bytes(ip_laag.payload).decode("utf-8", errors="replace")
+            except Exception:
+                payload_str = repr(bytes(ip_laag.payload))
+            ip_info = (ip_laag.dst, ip_laag.src, payload_str)
         else:
             werkelijke_payload, _ = ontleed_payload(raw_payload)
             try:
@@ -308,6 +345,7 @@ class SnifferThread(threading.Thread):
             "ethertype_int": eth.type,
             "payload_tekst": payload_str,
             "data_bytes": raw_payload,
+            "ip_info": ip_info,
         }
         self.signals.frame_ontvangen.emit(frame_info)
 
@@ -341,6 +379,7 @@ class FrameVisualisatieWidget(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._velden = []
         self._leeg_bericht = ""
+        self._geneste_ip_velden = None
 
     def toon_leeg(self, bericht):
         """
@@ -351,9 +390,10 @@ class FrameVisualisatieWidget(QWidget):
         """
         self._velden = []
         self._leeg_bericht = bericht
+        self._geneste_ip_velden = None
         self.update()
 
-    def toon_frame(self, dst_mac, src_mac, ethertype_hex, ethertype_int, payload_tekst, data_bytes):
+    def toon_frame(self, dst_mac, src_mac, ethertype_hex, ethertype_int, payload_tekst, data_bytes, ip_info=None):
         """
         dst_mac/src_mac: ingevoerde MAC-adressen (tekst).
         ethertype_hex/ethertype_int: EtherType als hex-tekst resp. int.
@@ -361,6 +401,12 @@ class FrameVisualisatieWidget(QWidget):
         data_bytes: de volledige, al aangevulde inhoud van het Data-veld
             zoals die daadwerkelijk verstuurd zou worden (lengteveld +
             tekst + eventuele padding).
+        ip_info: optioneel (dst_ip, src_ip, ip_payload_tekst). Als gezet,
+            wordt het Data-veld getekend als een genest IPv4-pakket
+            (Destination IP / Source IP / Data) BINNEN dezelfde
+            Data-box, in plaats van gewoon de payloadtekst te tonen —
+            zodat visueel duidelijk is dat het IP-pakket in het
+            Data-gebied van het Ethernet frame zit.
         """
         fcs_bytes = bereken_dummy_fcs(dst_mac, src_mac, ethertype_int, data_bytes)
 
@@ -372,6 +418,15 @@ class FrameVisualisatieWidget(QWidget):
             ("Data", len(data_bytes), payload_tekst if payload_tekst else "(leeg)"),
             ("FCS", len(fcs_bytes), fcs_bytes.hex(" ").upper()),
         ]
+        if ip_info:
+            dst_ip, src_ip, ip_payload_tekst = ip_info
+            self._geneste_ip_velden = [
+                ("Destination IP", dst_ip or "-"),
+                ("Source IP", src_ip or "-"),
+                ("Data", ip_payload_tekst if ip_payload_tekst else "(leeg)"),
+            ]
+        else:
+            self._geneste_ip_velden = None
         self.update()
 
     def paintEvent(self, event):
@@ -434,38 +489,45 @@ class FrameVisualisatieWidget(QWidget):
             painter.setBrush(vulkleur)
             painter.drawRect(rect)
 
-            # werkelijke waarde, in het vet, IN de box
-            painter.save()
-            painter.setClipRect(rect)
-            font_waarde = QFont(basis_font)
-            font_waarde.setPointSize(8)
-            font_waarde.setBold(True)
-            painter.setFont(font_waarde)
-            painter.setPen(QColor("#444444") if is_buiten_app else QColor("#0b2e52"))
-            painter.drawText(
-                rect,
-                int(Qt.AlignmentFlag.AlignCenter) | int(Qt.TextFlag.TextWordWrap),
-                str(waarde),
-            )
-            painter.restore()
+            if naam == "Data" and self._geneste_ip_velden:
+                # Het IPv4-pakket wordt getekend BINNEN de Data-box zelf
+                # (i.p.v. de gewone waarde-tekst) — dezelfde hoogte als
+                # de rest van de rij, zodat in één oogopslag duidelijk is
+                # dat dit IP-pakket de Ethernet-payload ís.
+                self._teken_geneste_ip(painter, rect, basis_font, onder_ruimte)
+            else:
+                # werkelijke waarde, in het vet, IN de box
+                painter.save()
+                painter.setClipRect(rect)
+                font_waarde = QFont(basis_font)
+                font_waarde.setPointSize(8)
+                font_waarde.setBold(True)
+                painter.setFont(font_waarde)
+                painter.setPen(QColor("#444444") if is_buiten_app else QColor("#0b2e52"))
+                painter.drawText(
+                    rect,
+                    int(Qt.AlignmentFlag.AlignCenter) | int(Qt.TextFlag.TextWordWrap),
+                    str(waarde),
+                )
+                painter.restore()
 
-            # veldnaam, klein, ONDER de box — geclipt op het eigen
-            # widget-oppervlak zodat een (te) lang woord nooit doorloopt
-            # in wat daaronder in de lay-out staat.
-            painter.save()
-            painter.setClipRect(QRectF(x, 0, breedte, self.height()))
-            font_naam = QFont(basis_font)
-            font_naam.setPointSize(7)
-            font_naam.setItalic(True)
-            painter.setFont(font_naam)
-            painter.setPen(QColor("#333333"))
-            naam_rect = QRectF(x, top + hoogte_box + 2, breedte, onder_ruimte - 2)
-            painter.drawText(
-                naam_rect,
-                int(Qt.AlignmentFlag.AlignHCenter) | int(Qt.AlignmentFlag.AlignTop) | int(Qt.TextFlag.TextWordWrap),
-                naam,
-            )
-            painter.restore()
+                # veldnaam, klein, ONDER de box — geclipt op het eigen
+                # widget-oppervlak zodat een (te) lang woord nooit doorloopt
+                # in wat daaronder in de lay-out staat.
+                painter.save()
+                painter.setClipRect(QRectF(x, 0, breedte, self.height()))
+                font_naam = QFont(basis_font)
+                font_naam.setPointSize(7)
+                font_naam.setItalic(True)
+                painter.setFont(font_naam)
+                painter.setPen(QColor("#333333"))
+                naam_rect = QRectF(x, top + hoogte_box + 2, breedte, onder_ruimte - 2)
+                painter.drawText(
+                    naam_rect,
+                    int(Qt.AlignmentFlag.AlignHCenter) | int(Qt.AlignmentFlag.AlignTop) | int(Qt.TextFlag.TextWordWrap),
+                    naam,
+                )
+                painter.restore()
 
             x += breedte
 
@@ -476,6 +538,69 @@ class FrameVisualisatieWidget(QWidget):
         painter.drawRect(QRectF(marge, top, beschikbare_breedte, hoogte_box))
 
         painter.end()
+
+    def _teken_geneste_ip(self, painter, data_rect, basis_font, onder_ruimte):
+        """
+        Tekent het IPv4-pakket (Destination IP / Source IP / Data) als
+        drie kleinere vakken BINNEN data_rect (dezelfde box als het
+        Ethernet Data-veld, met een kleine marge), in een afwijkende
+        kleur (amber i.p.v. blauw) — zodat zonder extra uitleg duidelijk
+        is dat de Ethernet-payload een genest IP-pakket is.
+        """
+        marge_in = 4.0
+        gap = 4.0
+        binnen_x = data_rect.left() + marge_in
+        binnen_y = data_rect.top() + marge_in
+        binnen_breedte = data_rect.width() - 2 * marge_in
+        binnen_hoogte = data_rect.height() - 2 * marge_in
+
+        gewichten_ip = [1.0, 1.0, 1.5]
+        totaal_gewicht_ip = sum(gewichten_ip)
+        beschikbaar = binnen_breedte - gap * (len(gewichten_ip) - 1)
+
+        x_ip = binnen_x
+        for (naam_ip, waarde_ip), gewicht_ip in zip(self._geneste_ip_velden, gewichten_ip):
+            breedte_ip = beschikbaar * gewicht_ip / totaal_gewicht_ip
+            rect_ip = QRectF(x_ip, binnen_y, breedte_ip, binnen_hoogte)
+
+            pen_ip = QPen(QColor("#b5720a"))
+            pen_ip.setWidthF(1.2)
+            painter.setPen(pen_ip)
+            painter.setBrush(QColor("#ffdca8"))
+            painter.drawRect(rect_ip)
+
+            painter.save()
+            painter.setClipRect(rect_ip)
+            font_waarde_ip = QFont(basis_font)
+            font_waarde_ip.setPointSize(7)
+            font_waarde_ip.setBold(True)
+            painter.setFont(font_waarde_ip)
+            painter.setPen(QColor("#6b3e00"))
+            painter.drawText(
+                rect_ip,
+                int(Qt.AlignmentFlag.AlignCenter) | int(Qt.TextFlag.TextWordWrap),
+                str(waarde_ip),
+            )
+            painter.restore()
+
+            # naam-label onder de Data-box, exact zoals bij de andere
+            # velden — vervangt hier het generieke "Data"-label.
+            painter.save()
+            painter.setClipRect(QRectF(x_ip, 0, breedte_ip, self.height()))
+            font_naam_ip = QFont(basis_font)
+            font_naam_ip.setPointSize(7)
+            font_naam_ip.setItalic(True)
+            painter.setFont(font_naam_ip)
+            painter.setPen(QColor("#333333"))
+            naam_rect_ip = QRectF(x_ip, data_rect.bottom() + 2, breedte_ip, onder_ruimte - 2)
+            painter.drawText(
+                naam_rect_ip,
+                int(Qt.AlignmentFlag.AlignHCenter) | int(Qt.AlignmentFlag.AlignTop) | int(Qt.TextFlag.TextWordWrap),
+                naam_ip,
+            )
+            painter.restore()
+
+            x_ip += breedte_ip + gap
 
 
 class HoofdVenster(QMainWindow):
@@ -622,19 +747,35 @@ class HoofdVenster(QMainWindow):
         self.arp_opties_widget.setVisible(False)
         frame_layout.addRow(self.arp_opties_widget)
 
+        # IPv4-subopties: alleen zichtbaar als het actieve EtherType
+        # IPv4 is (dus vanaf Mode-C). Destination MAC blijft — anders
+        # dan bij ARP — het gewone vrije veld: de student vult beide
+        # (MAC én IP) zelf in, bijv. nadat het MAC-adres al via een
+        # eerdere ARP-aanvraag is achterhaald.
+        self.ipv4_opties_widget = QWidget()
+        ipv4_opties_layout = QFormLayout(self.ipv4_opties_widget)
+        ipv4_opties_layout.setContentsMargins(0, 0, 0, 0)
+        self.ipv4_dst_ip_edit = QLineEdit()
+        self.ipv4_dst_ip_edit.setPlaceholderText("bijv. 192.168.1.10")
+        self.ipv4_dst_ip_edit.textChanged.connect(self._bijwerken_visualisatie)
+        ipv4_opties_layout.addRow("Destination IP:", self.ipv4_dst_ip_edit)
+        self.ipv4_src_ip_edit = QLineEdit()
+        self.ipv4_src_ip_edit.setPlaceholderText("bijv. 192.168.1.5")
+        self.ipv4_src_ip_edit.textChanged.connect(self._bijwerken_visualisatie)
+        ipv4_opties_layout.addRow("Source IP:", self.ipv4_src_ip_edit)
+        self.ipv4_opties_widget.setVisible(False)
+        frame_layout.addRow(self.ipv4_opties_widget)
+
         modus_uitleg = QLabel(
             "Mode-A biedt alleen Ethernet-framing (de huidige "
             "functionaliteit). Vanaf Mode-B (Instellingen → Modus) "
             "verschijnen er extra protocol-opties bij het opbouwen van "
             "een frame, ter voorbereiding op latere uitbreidingen. "
-            "Ethernet en ARP kunnen daadwerkelijk verzonden worden "
-            "(de ARP-payload is een leesbare pseudo-ARP-tekst, geen "
-            "echte binaire ARP-structuur); IPv4/IPv6 zijn nog niet "
-            "functioneel. Ontvangen frames worden, ongeacht de gekozen "
-            "modus, nog altijd gefilterd op Ethernet (EtherType "
-            "0x88B5) — ARP-frames zijn dus wel te verzenden en in "
-            "Wireshark te bekijken, maar nog niet in de sniffer van "
-            "deze applicatie."
+            "Ethernet, ARP en IPv4 kunnen daadwerkelijk verzonden én "
+            "ontvangen worden (de ARP-payload is een leesbare "
+            "pseudo-ARP-tekst, geen echte binaire ARP-structuur; het "
+            "IPv4-pakket gebruikt protocolnummer 253, gereserveerd voor "
+            "experimenteel gebruik); IPv6 is nog niet functioneel."
         )
         modus_uitleg.setWordWrap(True)
         modus_uitleg.setStyleSheet("color: #666666; font-size: 11px;")
@@ -691,8 +832,10 @@ class HoofdVenster(QMainWindow):
         sniffer_group = QGroupBox("Live sniffer")
         sniffer_layout = QVBoxLayout()
 
-        # EtherType om te sniffen — alleen zichtbaar vanaf Mode-B, waar
-        # ARP als optie beschikbaar komt (zie _toepassen_modus). In
+        # EtherType om te sniffen — alleen zichtbaar vanaf Mode-B. Welke
+        # opties er in de lijst staan is per modus cumulatief (zie
+        # ONTVANGST_ETHERTYPES) en wordt in _toepassen_modus() gevuld;
+        # hier alleen een startwaarde zodat het veld nooit leeg is. In
         # Mode-A blijft dit onzichtbaar en wordt altijd Ethernet
         # (0x88B5) gesniffed, zoals voorheen.
         self.ontvangst_ethertype_widget = QWidget()
@@ -700,10 +843,9 @@ class HoofdVenster(QMainWindow):
         ontvangst_ethertype_layout.setContentsMargins(0, 0, 0, 0)
         self.ontvangst_ethertype_combo = QComboBox()
         self.ontvangst_ethertype_combo.addItem("Ethernet (0x88B5)", DEFAULT_ETHERTYPE)
-        self.ontvangst_ethertype_combo.addItem("ARP (0x0806)", ARP_ETHERTYPE)
         ontvangst_ethertype_layout.addRow("EtherType om te sniffen:", self.ontvangst_ethertype_combo)
         ontvangst_ethertype_uitleg = QLabel(
-            "Let op: bij ARP wordt al het ARP-verkeer op dit "
+            "Let op: bij ARP of IPv4 wordt al dat verkeer op dit "
             "netwerksegment getoond (van alle apparaten, niet alleen "
             "van je labpartner) — normaal in een lab-opstelling."
         )
@@ -837,8 +979,18 @@ class HoofdVenster(QMainWindow):
                 self.src_mac_edit.setText(mac)
             except Exception:
                 self.src_mac_edit.setText("")
+            try:
+                ip = get_if_addr(iface_name)
+                # get_if_addr() geeft "0.0.0.0" terug als de interface
+                # geen IPv4-adres heeft (heel gebruikelijk in dit
+                # labcontext) — dan laten we het veld leeg zodat de
+                # student het zelf kan invullen.
+                self.ipv4_src_ip_edit.setText(ip if ip and ip != "0.0.0.0" else "")
+            except Exception:
+                self.ipv4_src_ip_edit.setText("")
         else:
             self.src_mac_edit.setText("")
+            self.ipv4_src_ip_edit.setText("")
         self._interface_status_label.setText(f"Interface: {iface_name or '—'}")
 
     # ------------------------------------------------------------------
@@ -868,8 +1020,23 @@ class HoofdVenster(QMainWindow):
             self._actief_ethertype = protocollen[0][1]
             self.ethertype_stack.setCurrentWidget(self.protocol_combo)
         self._modus_status_label.setText(f"Modus: {MODUS_OMSCHRIJVING[modus_sleutel]}")
+
         self.ontvangst_ethertype_widget.setVisible(modus_sleutel != "Mode-A")
-        self._bijwerken_arp_status()
+        if modus_sleutel != "Mode-A":
+            # Welke EtherTypes te sniffen zijn is ook per modus
+            # cumulatief (zie ONTVANGST_ETHERTYPES); de eerder gekozen
+            # waarde blijft behouden als die in de nieuwe modus nog
+            # bestaat, anders valt het terug op Ethernet.
+            huidige_keuze = self.ontvangst_ethertype_combo.currentData()
+            self.ontvangst_ethertype_combo.blockSignals(True)
+            self.ontvangst_ethertype_combo.clear()
+            for naam, waarde in ONTVANGST_ETHERTYPES[modus_sleutel]:
+                self.ontvangst_ethertype_combo.addItem(naam, waarde)
+            idx = self.ontvangst_ethertype_combo.findData(huidige_keuze)
+            self.ontvangst_ethertype_combo.setCurrentIndex(idx if idx >= 0 else 0)
+            self.ontvangst_ethertype_combo.blockSignals(False)
+
+        self._bijwerken_protocol_status()
 
     def _protocol_gewijzigd(self, index):
         if index < 0:
@@ -878,13 +1045,13 @@ class HoofdVenster(QMainWindow):
         if waarde is None:
             return
         self._actief_ethertype = waarde
-        self._bijwerken_arp_status()
+        self._bijwerken_protocol_status()
 
     # ------------------------------------------------------------------
     # ARP-subopties (alleen relevant als EtherType ARP gekozen is)
     # ------------------------------------------------------------------
     def _arp_gewijzigd(self, *_args):
-        self._bijwerken_arp_status()
+        self._bijwerken_protocol_status()
 
     def _arp_payload_tekst(self):
         ip = self.arp_ip_edit.text().strip()
@@ -907,16 +1074,36 @@ class HoofdVenster(QMainWindow):
             arp_laag = ARP(op=1, hwsrc=src_mac or None, psrc="0.0.0.0", pdst=ip)
         return Ether(dst=dst_mac, src=src_mac or None, type=ARP_ETHERTYPE) / arp_laag
 
-    def _bijwerken_arp_status(self):
+    def _bouw_echt_ipv4_frame(self, dst_mac, src_mac):
         """
-        Toont/verbergt de ARP-subopties en dwingt, als ARP actief is, de
-        bijbehorende Destination MAC en payload af in de gewone velden
-        (die daarvoor tijdelijk uitgeschakeld worden) — zodat de rest
-        van de applicatie (visualisatie, versturen) ongewijzigd gewoon
-        dst_mac_edit/payload_edit kan blijven uitlezen.
+        Bouwt het daadwerkelijk te verzenden IP-pakket op. In
+        tegenstelling tot ARP is hier geen kunstmatige zinsconstructie
+        nodig: de vrije payloadtekst kan letterlijk de inhoud van het
+        IP-pakket zijn. Protocolnummer 253 is gereserveerd voor
+        experimenteel/testgebruik (RFC 3692), zodat dit nooit met
+        TCP/UDP/ICMP verward wordt.
+        """
+        dst_ip = self.ipv4_dst_ip_edit.text().strip()
+        src_ip = self.ipv4_src_ip_edit.text().strip()
+        payload_tekst = self.payload_edit.text()
+        ip_laag = IP(dst=dst_ip, src=src_ip or None, proto=IPV4_CUSTOM_PROTO) / payload_tekst.encode("utf-8")
+        return Ether(dst=dst_mac, src=src_mac or None, type=IPV4_ETHERTYPE) / ip_laag
+
+    def _bijwerken_protocol_status(self):
+        """
+        Toont/verbergt de ARP- en IPv4-subopties naar gelang het actieve
+        EtherType, en dwingt bij ARP de bijbehorende Destination MAC en
+        payload af in de gewone velden (die daarvoor tijdelijk
+        uitgeschakeld worden) — zodat de rest van de applicatie
+        (visualisatie, versturen) ongewijzigd gewoon dst_mac_edit/
+        payload_edit kan blijven uitlezen. Bij IPv4 blijven Destination
+        MAC en Payload gewoon vrij invulbaar (de student vult zowel MAC
+        als IP zelf in).
         """
         is_arp = self._actief_ethertype == ARP_ETHERTYPE
+        is_ipv4 = self._actief_ethertype == IPV4_ETHERTYPE
         self.arp_opties_widget.setVisible(is_arp)
+        self.ipv4_opties_widget.setVisible(is_ipv4)
 
         if not is_arp:
             self.dst_mac_edit.setEnabled(True)
@@ -942,9 +1129,26 @@ class HoofdVenster(QMainWindow):
         src_mac = self.src_mac_edit.text().strip()
         payload_tekst = self.payload_edit.text()
 
-        data_bytes = bouw_payload_bytes(payload_tekst)
-        if len(data_bytes) < MIN_DATA_BYTES:
-            data_bytes += b"\x00" * (MIN_DATA_BYTES - len(data_bytes))
+        ip_info = None
+        if self._actief_ethertype == IPV4_ETHERTYPE:
+            dst_ip = self.ipv4_dst_ip_edit.text().strip()
+            src_ip = self.ipv4_src_ip_edit.text().strip()
+            ip_info = (dst_ip, src_ip, payload_tekst)
+            # De payload is hier al de vrije tekst zelf (geen kunstmatige
+            # zinsconstructie zoals bij ARP), dus de visualisatie kan de
+            # ECHTE pakketbytes tonen — in tegenstelling tot ARP is er
+            # dus geen afwijking tussen visualisatie en werkelijkheid.
+            try:
+                data_bytes = bytes(
+                    IP(dst=dst_ip or "0.0.0.0", src=src_ip or "0.0.0.0", proto=IPV4_CUSTOM_PROTO)
+                    / payload_tekst.encode("utf-8")
+                )
+            except Exception:
+                data_bytes = b""
+        else:
+            data_bytes = bouw_payload_bytes(payload_tekst)
+            if len(data_bytes) < MIN_DATA_BYTES:
+                data_bytes += b"\x00" * (MIN_DATA_BYTES - len(data_bytes))
 
         self.frame_visualisatie.toon_frame(
             dst_mac=dst_mac,
@@ -953,6 +1157,7 @@ class HoofdVenster(QMainWindow):
             ethertype_int=self._actief_ethertype,
             payload_tekst=payload_tekst,
             data_bytes=data_bytes,
+            ip_info=ip_info,
         )
 
     def _verstuur_frame(self):
@@ -961,20 +1166,24 @@ class HoofdVenster(QMainWindow):
             QMessageBox.warning(self, "Fout", "Geen geldige interface geselecteerd.")
             return
 
-        if self._actief_ethertype not in (DEFAULT_ETHERTYPE, ARP_ETHERTYPE):
+        if self._actief_ethertype not in (DEFAULT_ETHERTYPE, ARP_ETHERTYPE, IPV4_ETHERTYPE):
             QMessageBox.information(
                 self,
                 "Nog niet beschikbaar",
                 "Dit protocol is in deze versie nog niet functioneel "
                 "geïmplementeerd — er kan op dit moment alleen "
-                "daadwerkelijk Ethernet (0x88B5) en ARP (0x0806) "
-                "verzonden worden. Kies een van die twee in de "
+                "daadwerkelijk Ethernet (0x88B5), ARP (0x0806) en IPv4 "
+                "(0x0800) verzonden worden. Kies een van die in de "
                 "protocollijst, of zet de modus terug naar Mode-A.",
             )
             return
 
         if self._actief_ethertype == ARP_ETHERTYPE and not self.arp_ip_edit.text().strip():
             QMessageBox.warning(self, "Fout", "Vul een IP-adres in voor het ARP-bericht.")
+            return
+
+        if self._actief_ethertype == IPV4_ETHERTYPE and not self.ipv4_dst_ip_edit.text().strip():
+            QMessageBox.warning(self, "Fout", "Vul een Destination IP in.")
             return
 
         src_mac = self.src_mac_edit.text().strip()
@@ -996,6 +1205,8 @@ class HoofdVenster(QMainWindow):
                 # student hoeft deze binaire opbouw niet te zien; de
                 # visualisatie hierboven is daarvoor de "vertaling".
                 frame = self._bouw_echt_arp_frame(dst_mac, src_mac)
+            elif self._actief_ethertype == IPV4_ETHERTYPE:
+                frame = self._bouw_echt_ipv4_frame(dst_mac, src_mac)
             else:
                 frame = Ether(dst=dst_mac, src=src_mac or None, type=self._actief_ethertype) / bouw_payload_bytes(payload_tekst)
             sendp(frame, iface=iface_name, verbose=False)
@@ -1091,6 +1302,7 @@ class HoofdVenster(QMainWindow):
             ethertype_int=frame_info["ethertype_int"],
             payload_tekst=frame_info["payload_tekst"],
             data_bytes=frame_info["data_bytes"],
+            ip_info=frame_info.get("ip_info"),
         )
 
     def _ontvangst_ethertype_gewijzigd(self, index):

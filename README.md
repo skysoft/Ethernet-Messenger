@@ -30,10 +30,10 @@ zien hoe Ethernet framing, MAC-adressering en EtherType werken.
   Mode-A (standaard) komt overeen met de bestaande Ethernet-werking
   (vast EtherType `0x88B5`). Vanaf Mode-B verschijnt er in plaats van het
   vaste EtherType-label een keuzelijst met extra protocollen (Mode-B:
-  + ARP, Mode-C: + IPv4, Mode-D: + IPv6). Ethernet én ARP kunnen
-  daadwerkelijk verzonden en ontvangen worden; IPv4/IPv6 staan er
-  voorlopig alleen ter illustratie bij (nog niet functioneel — dat komt
-  in een latere fase).
+  + ARP, Mode-C: + IPv4, Mode-D: + IPv6). Ethernet, ARP én IPv4 kunnen
+  daadwerkelijk verzonden en ontvangen worden; IPv6 staat er voorlopig
+  alleen ter illustratie bij (nog niet functioneel — dat komt in een
+  latere fase).
 - **ARP opbouwen (Mode-B en hoger, EtherType ARP gekozen)**: onder de
   EtherType-keuzelijst verschijnen dan twee extra velden: "Soort ARP"
   ("Verzend ARP aanvraag" of "Verzend ARP antwoord") en een vrij
@@ -54,13 +54,35 @@ zien hoe Ethernet framing, MAC-adressering en EtherType werken.
   netwerkstacks het ook als ARP herkennen. De student hoeft die binaire
   opbouw niet te zien; de leesbare tekst in de visualisatie is de
   "vertaling" ervan.
-- **ARP ontvangen (Mode-B en hoger)**: op het tabblad Ontvangen
-  verschijnt dan een keuzelijst "EtherType om te sniffen" (Ethernet of
-  ARP) boven de sniffer-checkbox. Bij ARP toont de sniffer al het
-  ARP-verkeer op het netwerksegment — dus van **alle** apparaten, niet
+- **IPv4 opbouwen (Mode-C en hoger, EtherType IPv4 gekozen)**: onder de
+  EtherType-keuzelijst verschijnen dan twee extra velden, **Destination
+  IP** en **Source IP** (dat laatste automatisch ingevuld vanaf het
+  IP-adres van de gekozen interface, indien aanwezig — anders blijft
+  het leeg om zelf in te vullen). Destination MAC en Payload blijven,
+  in tegenstelling tot bij ARP, gewoon vrij invulbare velden: de
+  student vult zowel het MAC-adres als het IP-adres van de bestemming
+  zelf in (bijv. nadat het MAC-adres al via een eerdere ARP-aanvraag is
+  achterhaald). De payload is hier gewoon de exacte vrije tekst, zonder
+  kunstmatige zinsconstructie — de visualisatie toont daarom de **echte
+  pakketbytes** (in tegenstelling tot ARP is er dus geen afwijking
+  tussen visualisatie en werkelijkheid). Er wordt een echt, geldig
+  IP-pakket verzonden (Scapy's `IP()`-laag) met protocolnummer **253**
+  (gereserveerd voor experimenteel/testgebruik, RFC 3692).
+
+  **Visueel wordt het IP-pakket getekend bínnen het Data-vak van het
+  Ethernet frame** — Destination IP, Source IP en Data verschijnen als
+  drie kleinere, amberkleurige vakken binnen de blauwe Data-box zelf
+  (alle velden op de rij blijven even hoog), zodat zonder extra
+  uitlegtekst direct duidelijk is dat het IP-pakket de Ethernet-payload
+  ís.
+- **ARP en IPv4 ontvangen (Mode-B resp. Mode-C en hoger)**: op het
+  tabblad Ontvangen verschijnt dan een keuzelijst "EtherType om te
+  sniffen" (Ethernet, ARP en/of IPv4, afhankelijk van de gekozen modus)
+  boven de sniffer-checkbox. Bij ARP of IPv4 toont de sniffer al dat
+  verkeer op het netwerksegment — dus van **alle** apparaten, niet
   alleen van je labpartner, wat op een live netwerk normaal is. Elk
-  ontvangen (echt, binair) ARP-pakket wordt teruggezet naar diezelfde
-  leesbare pseudo-ARP-tekst als aan de verzendkant.
+  ontvangen (echt, binair) ARP- of IP-pakket wordt teruggezet naar
+  dezelfde leesbare weergave als aan de verzendkant.
 - Ethernet frame opbouwen: source MAC (auto-ingevuld, aanpasbaar),
   destination MAC (met snelknop voor broadcast `ff:ff:ff:ff:ff:ff`),
   EtherType (in Mode-A vast op `0x88B5`), vrije tekst payload.
@@ -76,12 +98,13 @@ zien hoe Ethernet framing, MAC-adressering en EtherType werken.
   het standaard bitpatroon, en de getoonde FCS is een illustratieve
   CRC-32-checksum over de huidige frame-inhoud die dus verandert zodra
   je iets aanpast — precies zoals een echte FCS.
-- Live sniffer (aan/uit via checkbox) die uitsluitend inkomende frames met
-  EtherType `0x88B5` toont (gefilterd met een BPF-filter, zodat er geen
-  ruis van ARP/IPv4/IPv6/STP/LLDP-verkeer binnenkomt). Zolang er nog
-  niets is ontvangen, toont de visualisatie geen frame-inhoud (dus ook
-  geen nagemaakte Preamble/Type/FCS) — pas na het eerste ontvangen
-  frame worden de velden echt ingevuld.
+- Live sniffer (aan/uit via checkbox) die uitsluitend inkomende frames van
+  het gekozen EtherType toont (in Mode-A altijd `0x88B5`, vanaf Mode-B
+  zelf te kiezen — zie hierboven), gefilterd met een BPF-filter zodat
+  er geen ruis van overig verkeer binnenkomt. Zolang er nog niets is
+  ontvangen, toont de visualisatie geen frame-inhoud (dus ook geen
+  nagemaakte Preamble/Type/FCS) — pas na het eerste ontvangen frame
+  worden de velden echt ingevuld.
 - **Eigen verzonden frames worden niet in de sniffer getoond.** Een
   lokale raw-socket capture (zoals Scapy/tcpdump gebruikt) vangt op
   Linux normaal gesproken zowel inkomend als zelf verzonden verkeer af
