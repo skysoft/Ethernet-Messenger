@@ -27,14 +27,32 @@ zien hoe Ethernet framing, MAC-adressering en EtherType werken.
   veth-paren).
 - **Modus-keuze (Mode-A t/m Mode-D)** (**Instellingen → Modus**): bepaalt
   welke protocol-opties beschikbaar zijn bij het opbouwen van een frame.
-  Mode-A (standaard) komt overeen met de bestaande, volledig functionele
-  Ethernet-werking (vast EtherType `0x88B5`). Vanaf Mode-B verschijnt er
-  in plaats van het vaste EtherType-label een keuzelijst met extra
-  protocollen (Mode-B: + ARP, Mode-C: + IPv4, Mode-D: + IPv6) — dit is
-  voorlopig vooral een **visuele voorbereiding** op latere uitbreidingen:
-  alleen Ethernet kan in deze versie daadwerkelijk verzonden worden, en
-  ontvangen frames blijven altijd gefilterd op EtherType `0x88B5`,
-  ongeacht de gekozen modus.
+  Mode-A (standaard) komt overeen met de bestaande Ethernet-werking
+  (vast EtherType `0x88B5`). Vanaf Mode-B verschijnt er in plaats van het
+  vaste EtherType-label een keuzelijst met extra protocollen (Mode-B:
+  + ARP, Mode-C: + IPv4, Mode-D: + IPv6). Ethernet én ARP kunnen
+  daadwerkelijk verzonden worden; IPv4/IPv6 staan er voorlopig alleen
+  ter illustratie bij (nog niet functioneel — dat komt in een latere
+  fase). Ontvangen frames blijven, ongeacht de gekozen modus, altijd
+  gefilterd op EtherType `0x88B5`: verzonden ARP-frames zijn dus wel op
+  de kabel te zien (bijv. met Wireshark) maar nog niet in de sniffer
+  van deze applicatie.
+- **ARP opbouwen (Mode-B en hoger, EtherType ARP gekozen)**: onder de
+  EtherType-keuzelijst verschijnen dan twee extra velden: "Soort ARP"
+  ("Verzend ARP aanvraag" of "Verzend ARP antwoord") en een vrij
+  IP-adresveld. De Destination MAC en Payload worden hierbij automatisch
+  bepaald (die velden worden tijdelijk uitgeschakeld):
+  - **ARP aanvraag**: Destination MAC wordt broadcast
+    (`ff:ff:ff:ff:ff:ff`), payload wordt `Wie heeft IP adres <IP>,
+    vertel het mij.` — waarbij "mij" verwijst naar het Source MAC-adres
+    dat in het frame te zien is.
+  - **ARP antwoord**: Destination MAC blijft handmatig invulbaar (een
+    antwoord is immers gericht aan één specifieke aanvrager), payload
+    wordt `IP-adres <IP> hoort bij mij.`
+
+  Dit is een **leesbare pseudo-ARP-tekst** ter illustratie van wat een
+  ARP-bericht betekent, geen bit-exacte reconstructie van de echte
+  (binaire) ARP-pakketstructuur uit RFC 826.
 - Ethernet frame opbouwen: source MAC (auto-ingevuld, aanpasbaar),
   destination MAC (met snelknop voor broadcast `ff:ff:ff:ff:ff:ff`),
   EtherType (in Mode-A vast op `0x88B5`), vrije tekst payload.

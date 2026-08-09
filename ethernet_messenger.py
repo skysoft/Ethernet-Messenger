@@ -60,26 +60,28 @@ except ImportError:
 
 
 DEFAULT_ETHERTYPE = 0x88B5  # gereserveerd voor experimenteel/onderwijsgebruik
+ARP_ETHERTYPE = 0x0806
 BPF_ETHERTYPE_FILTER = f"ether proto {DEFAULT_ETHERTYPE:#06x}"
 BROADCAST_MAC = "ff:ff:ff:ff:ff:ff"
 MIN_DATA_BYTES = 46  # minimale grootte van het Data-veld (Ethernet-norm)
 
 # Modi: elke volgende modus voegt protocol-opties toe aan de te kiezen
-# EtherType bij het opbouwen van een frame. Dit is voorlopig alleen een
-# visuele/keuze-uitbreiding — daadwerkelijk verzenden werkt in deze
-# versie nog uitsluitend met Ethernet (0x88B5); ARP/IPv4/IPv6 worden in
-# een latere fase functioneel uitgewerkt.
+# EtherType bij het opbouwen van een frame. Ethernet en ARP zijn
+# functioneel uitgewerkt (ARP als leesbare pseudo-ARP-tekst i.p.v. de
+# echte binaire ARP-structuur — zie _arp_payload_tekst); IPv4/IPv6
+# staan er voorlopig alleen ter illustratie bij, worden in een latere
+# fase functioneel uitgewerkt.
 MODUS_PROTOCOLLEN = {
     "Mode-A": [("Ethernet (0x88B5)", DEFAULT_ETHERTYPE)],
-    "Mode-B": [("Ethernet (0x88B5)", DEFAULT_ETHERTYPE), ("ARP (0x0806)", 0x0806)],
+    "Mode-B": [("Ethernet (0x88B5)", DEFAULT_ETHERTYPE), ("ARP (0x0806)", ARP_ETHERTYPE)],
     "Mode-C": [
         ("Ethernet (0x88B5)", DEFAULT_ETHERTYPE),
-        ("ARP (0x0806)", 0x0806),
+        ("ARP (0x0806)", ARP_ETHERTYPE),
         ("IPv4 (0x0800)", 0x0800),
     ],
     "Mode-D": [
         ("Ethernet (0x88B5)", DEFAULT_ETHERTYPE),
-        ("ARP (0x0806)", 0x0806),
+        ("ARP (0x0806)", ARP_ETHERTYPE),
         ("IPv4 (0x0800)", 0x0800),
         ("IPv6 (0x86DD)", 0x86DD),
     ],
@@ -574,15 +576,38 @@ class HoofdVenster(QMainWindow):
         self.ethertype_stack.addWidget(self.protocol_combo)
         frame_layout.addRow("EtherType:", self.ethertype_stack)
 
+        # ARP-subopties: alleen zichtbaar als het actieve EtherType ARP
+        # is (dus vanaf Mode-B, waar ARP als keuze verschijnt). "Soort
+        # ARP" en "IP-adres" bepalen samen de leesbare pseudo-ARP-tekst
+        # die als payload gebruikt wordt — zie _arp_payload_tekst().
+        self.arp_opties_widget = QWidget()
+        arp_opties_layout = QFormLayout(self.arp_opties_widget)
+        arp_opties_layout.setContentsMargins(0, 0, 0, 0)
+        self.arp_soort_combo = QComboBox()
+        self.arp_soort_combo.addItem("Verzend ARP aanvraag", "aanvraag")
+        self.arp_soort_combo.addItem("Verzend ARP antwoord", "antwoord")
+        self.arp_soort_combo.currentIndexChanged.connect(self._arp_gewijzigd)
+        arp_opties_layout.addRow("Soort ARP:", self.arp_soort_combo)
+        self.arp_ip_edit = QLineEdit()
+        self.arp_ip_edit.setPlaceholderText("bijv. 192.168.1.1")
+        self.arp_ip_edit.textChanged.connect(self._arp_gewijzigd)
+        arp_opties_layout.addRow("IP-adres:", self.arp_ip_edit)
+        self.arp_opties_widget.setVisible(False)
+        frame_layout.addRow(self.arp_opties_widget)
+
         modus_uitleg = QLabel(
             "Mode-A biedt alleen Ethernet-framing (de huidige "
             "functionaliteit). Vanaf Mode-B (Instellingen → Modus) "
             "verschijnen er extra protocol-opties bij het opbouwen van "
-            "een frame, ter voorbereiding op latere uitbreidingen — "
-            "voorlopig kan daadwerkelijk alleen Ethernet (0x88B5) "
-            "verzonden worden. Ontvangen frames worden, ongeacht de "
-            "gekozen modus, nog altijd gefilterd op Ethernet "
-            "(EtherType 0x88B5)."
+            "een frame, ter voorbereiding op latere uitbreidingen. "
+            "Ethernet en ARP kunnen daadwerkelijk verzonden worden "
+            "(de ARP-payload is een leesbare pseudo-ARP-tekst, geen "
+            "echte binaire ARP-structuur); IPv4/IPv6 zijn nog niet "
+            "functioneel. Ontvangen frames worden, ongeacht de gekozen "
+            "modus, nog altijd gefilterd op Ethernet (EtherType "
+            "0x88B5) — ARP-frames zijn dus wel te verzenden en in "
+            "Wireshark te bekijken, maar nog niet in de sniffer van "
+            "deze applicatie."
         )
         modus_uitleg.setWordWrap(True)
         modus_uitleg.setStyleSheet("color: #666666; font-size: 11px;")
@@ -796,7 +821,7 @@ class HoofdVenster(QMainWindow):
             self._actief_ethertype = protocollen[0][1]
             self.ethertype_stack.setCurrentWidget(self.protocol_combo)
         self._modus_status_label.setText(f"Modus: {MODUS_OMSCHRIJVING[modus_sleutel]}")
-        self._bijwerken_visualisatie()
+        self._bijwerken_arp_status()
 
     def _protocol_gewijzigd(self, index):
         if index < 0:
@@ -805,6 +830,49 @@ class HoofdVenster(QMainWindow):
         if waarde is None:
             return
         self._actief_ethertype = waarde
+        self._bijwerken_arp_status()
+
+    # ------------------------------------------------------------------
+    # ARP-subopties (alleen relevant als EtherType ARP gekozen is)
+    # ------------------------------------------------------------------
+    def _arp_gewijzigd(self, *_args):
+        self._bijwerken_arp_status()
+
+    def _arp_payload_tekst(self):
+        ip = self.arp_ip_edit.text().strip() or "?"
+        soort = self.arp_soort_combo.currentData()
+        if soort == "antwoord":
+            return f"IP-adres {ip} hoort bij mij."
+        return f"Wie heeft IP adres {ip}, vertel het mij."
+
+    def _bijwerken_arp_status(self):
+        """
+        Toont/verbergt de ARP-subopties en dwingt, als ARP actief is, de
+        bijbehorende Destination MAC en payload af in de gewone velden
+        (die daarvoor tijdelijk uitgeschakeld worden) — zodat de rest
+        van de applicatie (visualisatie, versturen) ongewijzigd gewoon
+        dst_mac_edit/payload_edit kan blijven uitlezen.
+        """
+        is_arp = self._actief_ethertype == ARP_ETHERTYPE
+        self.arp_opties_widget.setVisible(is_arp)
+
+        if not is_arp:
+            self.dst_mac_edit.setEnabled(True)
+            self.payload_edit.setEnabled(True)
+            self._bijwerken_visualisatie()
+            return
+
+        soort = self.arp_soort_combo.currentData()
+        if soort == "aanvraag":
+            self.dst_mac_edit.setEnabled(False)
+            self.dst_mac_edit.setText(BROADCAST_MAC)
+        else:
+            # Een ARP-antwoord is unicast: de student vult zelf de MAC
+            # van de oorspronkelijke aanvrager in.
+            self.dst_mac_edit.setEnabled(True)
+
+        self.payload_edit.setEnabled(False)
+        self.payload_edit.setText(self._arp_payload_tekst())
         self._bijwerken_visualisatie()
 
     def _bijwerken_visualisatie(self):
@@ -831,16 +899,20 @@ class HoofdVenster(QMainWindow):
             QMessageBox.warning(self, "Fout", "Geen geldige interface geselecteerd.")
             return
 
-        if self._actief_ethertype != DEFAULT_ETHERTYPE:
+        if self._actief_ethertype not in (DEFAULT_ETHERTYPE, ARP_ETHERTYPE):
             QMessageBox.information(
                 self,
                 "Nog niet beschikbaar",
                 "Dit protocol is in deze versie nog niet functioneel "
                 "geïmplementeerd — er kan op dit moment alleen "
-                "daadwerkelijk Ethernet (0x88B5) verzonden worden. Kies "
-                "'Ethernet (0x88B5)' in de protocollijst, of zet de "
-                "modus terug naar Mode-A.",
+                "daadwerkelijk Ethernet (0x88B5) en ARP (0x0806) "
+                "verzonden worden. Kies een van die twee in de "
+                "protocollijst, of zet de modus terug naar Mode-A.",
             )
+            return
+
+        if self._actief_ethertype == ARP_ETHERTYPE and not self.arp_ip_edit.text().strip():
+            QMessageBox.warning(self, "Fout", "Vul een IP-adres in voor het ARP-bericht.")
             return
 
         src_mac = self.src_mac_edit.text().strip()
