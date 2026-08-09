@@ -16,20 +16,23 @@ zien hoe Ethernet framing, MAC-adressering en EtherType werken.
 ## Functionaliteit
 
 - Overzichtelijke indeling in twee tabbladen, **Verzenden** en
-  **Ontvangen**, met de interface-selectie en modus-keuze erboven (die
-  gelden voor beide kanten).
-- Interface-selectie met automatische detectie van het eigen MAC-adres.
-  De loopback-interface (`lo`) wordt niet getoond, en standaard wordt de
-  eerste fysieke netwerkinterface geselecteerd (dus geen virtuele
-  interfaces zoals `docker0`, bridges of veth-paren).
-- **Modus-keuze (Mode-A t/m Mode-D)**: bepaalt welke protocol-opties
-  beschikbaar zijn bij het opbouwen van een frame. Mode-A (standaard)
-  komt overeen met de bestaande, volledig functionele Ethernet-werking
-  (vast EtherType `0x88B5`). Vanaf Mode-B verschijnt er in plaats van
-  het vaste EtherType-label een keuzelijst met extra protocollen
-  (Mode-B: + ARP, Mode-C: + IPv4, Mode-D: + IPv6) — dit is voorlopig
-  vooral een **visuele voorbereiding** op latere uitbreidingen: alleen
-  Ethernet kan in deze versie daadwerkelijk verzonden worden, en
+  **Ontvangen**. Instellingen die voor beide kanten gelden (interface en
+  modus) staan in de menubalk onder **Instellingen**, met de actief
+  gekozen interface en modus altijd zichtbaar in de statusbalk onderin
+  het venster.
+- Interface-selectie (**Instellingen → Interface**) met automatische
+  detectie van het eigen MAC-adres. De loopback-interface (`lo`) wordt
+  niet getoond, en standaard wordt de eerste fysieke netwerkinterface
+  geselecteerd (dus geen virtuele interfaces zoals `docker0`, bridges of
+  veth-paren).
+- **Modus-keuze (Mode-A t/m Mode-D)** (**Instellingen → Modus**): bepaalt
+  welke protocol-opties beschikbaar zijn bij het opbouwen van een frame.
+  Mode-A (standaard) komt overeen met de bestaande, volledig functionele
+  Ethernet-werking (vast EtherType `0x88B5`). Vanaf Mode-B verschijnt er
+  in plaats van het vaste EtherType-label een keuzelijst met extra
+  protocollen (Mode-B: + ARP, Mode-C: + IPv4, Mode-D: + IPv6) — dit is
+  voorlopig vooral een **visuele voorbereiding** op latere uitbreidingen:
+  alleen Ethernet kan in deze versie daadwerkelijk verzonden worden, en
   ontvangen frames blijven altijd gefilterd op EtherType `0x88B5`,
   ongeacht de gekozen modus.
 - Ethernet frame opbouwen: source MAC (auto-ingevuld, aanpasbaar),

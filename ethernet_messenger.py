@@ -24,7 +24,7 @@ import time
 import zlib
 
 from PyQt6.QtCore import Qt, pyqtSignal, QObject, QRectF, QTimer
-from PyQt6.QtGui import QPainter, QColor, QPen, QFont
+from PyQt6.QtGui import QPainter, QColor, QPen, QFont, QActionGroup
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -45,6 +45,7 @@ from PyQt6.QtWidgets import (
     QStackedWidget,
     QListWidget,
     QListWidgetItem,
+    QMenu,
 )
 
 try:
@@ -302,7 +303,12 @@ class FrameVisualisatieWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumHeight(150)
+        # setFixedHeight (i.p.v. setMinimumHeight) omdat deze widget geen
+        # eigen sizeHint() heeft: zonder een concrete hoogte-hint heeft
+        # een "Fixed" verticale size policy niets om op te ankeren, en
+        # rekt de widget alsnog uit zodra er extra ruimte beschikbaar is
+        # (bijv. bij het gemaximaliseerd opstarten van de applicatie).
+        self.setFixedHeight(150)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._velden = []
         self._leeg_bericht = ""
@@ -455,6 +461,7 @@ class HoofdVenster(QMainWindow):
         self.sniffer_signals.fout.connect(self._toon_sniffer_fout)
 
         self._actief_ethertype = DEFAULT_ETHERTYPE
+        self._actieve_interface = ""
 
         self._bouw_ui()
         self._controleer_root_rechten()
@@ -464,6 +471,8 @@ class HoofdVenster(QMainWindow):
     # UI opbouw
     # ------------------------------------------------------------------
     def _bouw_ui(self):
+        self._bouw_menu()
+
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
@@ -477,49 +486,56 @@ class HoofdVenster(QMainWindow):
         self.root_waarschuwing.hide()
         layout.addWidget(self.root_waarschuwing)
 
-        # Interface-selectie — geldt zowel voor verzenden als ontvangen,
-        # daarom buiten de tabbladen geplaatst.
-        iface_group = QGroupBox("Netwerkinterface")
-        iface_layout = QFormLayout()
-        self.iface_combo = QComboBox()
-        self.iface_combo.currentIndexChanged.connect(self._interface_gewijzigd)
-        iface_layout.addRow("Interface:", self.iface_combo)
-        iface_group.setLayout(iface_layout)
-        layout.addWidget(iface_group)
-
-        # Modus-selectie: elke volgende modus voegt protocol-opties toe
-        # aan het EtherType-veld bij het opbouwen van een frame. Widgets
-        # die de gekozen modus beïnvloedt (protocol_combo, ethertype_stack)
-        # worden pas hierna gebouwd (in _bouw_verzenden_tab), dus het
-        # signaal wordt bewust pas ná het bouwen van de tabs gekoppeld.
-        modus_group = QGroupBox("Modus")
-        modus_layout = QVBoxLayout()
-        self.modus_combo = QComboBox()
-        for sleutel in ("Mode-A", "Mode-B", "Mode-C", "Mode-D"):
-            self.modus_combo.addItem(MODUS_OMSCHRIJVING[sleutel], sleutel)
-        modus_layout.addWidget(self.modus_combo)
-        modus_uitleg = QLabel(
-            "Mode-A biedt alleen Ethernet-framing (de huidige "
-            "functionaliteit). Vanaf Mode-B verschijnen er extra "
-            "protocol-opties bij het opbouwen van een frame, ter "
-            "voorbereiding op latere uitbreidingen — voorlopig kan "
-            "daadwerkelijk alleen Ethernet (0x88B5) verzonden worden. "
-            "Ontvangen frames worden, ongeacht de gekozen modus, nog "
-            "altijd gefilterd op Ethernet (EtherType 0x88B5)."
-        )
-        modus_uitleg.setWordWrap(True)
-        modus_uitleg.setStyleSheet("color: #666666; font-size: 11px;")
-        modus_layout.addWidget(modus_uitleg)
-        modus_group.setLayout(modus_layout)
-        layout.addWidget(modus_group)
-
         tabs = QTabWidget()
         layout.addWidget(tabs)
         tabs.addTab(self._bouw_verzenden_tab(), "Verzenden")
         tabs.addTab(self._bouw_ontvangen_tab(), "Ontvangen")
 
-        self.modus_combo.currentIndexChanged.connect(self._modus_gewijzigd)
-        self._modus_gewijzigd(self.modus_combo.currentIndex())
+        self._bouw_statusbalk()
+
+        # De modus-acties bestaan al (uit _bouw_menu), maar het effect
+        # ervan (ethertype_stack/protocol_combo) kon pas na het bouwen
+        # van de tabs toegepast worden — daarom hier expliciet de
+        # standaardmodus (Mode-A) toepassen.
+        self._toepassen_modus("Mode-A")
+
+    def _bouw_menu(self):
+        """
+        Menubalk met "Instellingen" → submenu's "Interface" en "Modus".
+        Deze gelden voor de hele applicatie (beide tabbladen), vandaar
+        de plek in de menubalk in plaats van in een tabblad.
+        """
+        instellingen_menu = self.menuBar().addMenu("&Instellingen")
+
+        # Interface-submenu wordt pas gevuld in _vul_interfaces(), zodra
+        # de daadwerkelijk beschikbare interfaces bekend zijn.
+        self.interface_menu = instellingen_menu.addMenu("Interface")
+        self.interface_actiegroep = QActionGroup(self)
+        self.interface_actiegroep.setExclusive(True)
+
+        self.modus_menu = instellingen_menu.addMenu("Modus")
+        self.modus_actiegroep = QActionGroup(self)
+        self.modus_actiegroep.setExclusive(True)
+        for sleutel in ("Mode-A", "Mode-B", "Mode-C", "Mode-D"):
+            actie = self.modus_menu.addAction(MODUS_OMSCHRIJVING[sleutel])
+            actie.setCheckable(True)
+            actie.setData(sleutel)
+            actie.setActionGroup(self.modus_actiegroep)
+            actie.triggered.connect(self._modus_actie_gekozen)
+            if sleutel == "Mode-A":
+                actie.setChecked(True)
+
+    def _bouw_statusbalk(self):
+        """
+        Toont de actieve interface en modus onderin het venster, zodat
+        die altijd zichtbaar blijven ook al zit de keuze nu in een menu.
+        """
+        statusbalk = self.statusBar()
+        self._interface_status_label = QLabel("Interface: —")
+        self._modus_status_label = QLabel(f"Modus: {MODUS_OMSCHRIJVING['Mode-A']}")
+        statusbalk.addPermanentWidget(self._interface_status_label)
+        statusbalk.addPermanentWidget(QLabel("  |  "))
+        statusbalk.addPermanentWidget(self._modus_status_label)
 
     def _bouw_verzenden_tab(self):
         tab = QWidget()
@@ -545,12 +561,33 @@ class HoofdVenster(QMainWindow):
         # (zie _toepassen_modus). Een QStackedWidget zodat Mode-A er
         # precies zo uitziet als voorheen.
         self.ethertype_stack = QStackedWidget()
+        # Verticaal vast, anders trekt deze rij (als enige "Preferred"
+        # veld in dit formulier, i.p.v. "Fixed" zoals de QLineEdits) alle
+        # overtollige ruimte naar zich toe zodra het venster groter is
+        # dan zijn natuurlijke grootte — bijv. bij het gemaximaliseerd
+        # opstarten van de applicatie.
+        self.ethertype_stack.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         self.ethertype_label = QLabel(f"0x{DEFAULT_ETHERTYPE:04X} (vast, voor dit lab)")
         self.ethertype_stack.addWidget(self.ethertype_label)
         self.protocol_combo = QComboBox()
         self.protocol_combo.currentIndexChanged.connect(self._protocol_gewijzigd)
         self.ethertype_stack.addWidget(self.protocol_combo)
         frame_layout.addRow("EtherType:", self.ethertype_stack)
+
+        modus_uitleg = QLabel(
+            "Mode-A biedt alleen Ethernet-framing (de huidige "
+            "functionaliteit). Vanaf Mode-B (Instellingen → Modus) "
+            "verschijnen er extra protocol-opties bij het opbouwen van "
+            "een frame, ter voorbereiding op latere uitbreidingen — "
+            "voorlopig kan daadwerkelijk alleen Ethernet (0x88B5) "
+            "verzonden worden. Ontvangen frames worden, ongeacht de "
+            "gekozen modus, nog altijd gefilterd op Ethernet "
+            "(EtherType 0x88B5)."
+        )
+        modus_uitleg.setWordWrap(True)
+        modus_uitleg.setStyleSheet("color: #666666; font-size: 11px;")
+        modus_uitleg.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        frame_layout.addRow(modus_uitleg)
 
         self.payload_edit = QLineEdit()
         self.payload_edit.setPlaceholderText("Vrije tekst payload")
@@ -587,6 +624,11 @@ class HoofdVenster(QMainWindow):
         verstuur_knop = QPushButton("Frame versturen")
         verstuur_knop.clicked.connect(self._verstuur_frame)
         tab_layout.addWidget(verstuur_knop)
+
+        # Vangt overtollige verticale ruimte op als blanco ruimte
+        # onderaan (bijv. bij het gemaximaliseerd opstarten van de
+        # applicatie), zodat geen enkele rij daarboven uitgerekt wordt.
+        tab_layout.addStretch(1)
 
         return tab
 
@@ -651,9 +693,11 @@ class HoofdVenster(QMainWindow):
         wis_knop = QPushButton("Log wissen")
         wis_knop.clicked.connect(self.log_venster.clear)
         sniffer_layout.addWidget(wis_knop)
+        sniffer_layout.addStretch(1)
 
         sniffer_group.setLayout(sniffer_layout)
         tab_layout.addWidget(sniffer_group)
+        tab_layout.addStretch(1)
 
         return tab
 
@@ -676,13 +720,16 @@ class HoofdVenster(QMainWindow):
     # Interfaces
     # ------------------------------------------------------------------
     def _vul_interfaces(self):
-        self.iface_combo.clear()
+        self.interface_menu.clear()
+        for actie in list(self.interface_actiegroep.actions()):
+            self.interface_actiegroep.removeAction(actie)
+
         interfaces = get_readable_interfaces()
         if not interfaces:
-            self.iface_combo.addItem("Geen interfaces gevonden", "")
+            actie = self.interface_menu.addAction("Geen interfaces gevonden")
+            actie.setEnabled(False)
+            self._interface_actie_toepassen("")
             return
-        for readable, iface_name in interfaces:
-            self.iface_combo.addItem(readable, iface_name)
 
         # Standaard de eerste fysieke interface selecteren (bijv. de
         # ingebouwde Ethernet- of wifi-adapter), niet zomaar de eerste
@@ -692,18 +739,35 @@ class HoofdVenster(QMainWindow):
             if is_physical_interface(iface_name):
                 standaard_index = i
                 break
-        self.iface_combo.setCurrentIndex(standaard_index)
-        self._interface_gewijzigd(standaard_index)
 
-    def _interface_gewijzigd(self, index):
-        iface_name = self.iface_combo.currentData()
-        if not iface_name:
+        for i, (readable, iface_name) in enumerate(interfaces):
+            actie = self.interface_menu.addAction(readable)
+            actie.setCheckable(True)
+            actie.setData(iface_name)
+            actie.setActionGroup(self.interface_actiegroep)
+            actie.triggered.connect(self._interface_actie_gekozen)
+            if i == standaard_index:
+                actie.setChecked(True)
+
+        self._interface_actie_toepassen(interfaces[standaard_index][1])
+
+    def _interface_actie_gekozen(self):
+        actie = self.sender()
+        if actie is None:
             return
-        try:
-            mac = get_if_hwaddr(iface_name)
-            self.src_mac_edit.setText(mac)
-        except Exception:
+        self._interface_actie_toepassen(actie.data())
+
+    def _interface_actie_toepassen(self, iface_name):
+        self._actieve_interface = iface_name
+        if iface_name:
+            try:
+                mac = get_if_hwaddr(iface_name)
+                self.src_mac_edit.setText(mac)
+            except Exception:
+                self.src_mac_edit.setText("")
+        else:
             self.src_mac_edit.setText("")
+        self._interface_status_label.setText(f"Interface: {iface_name or '—'}")
 
     # ------------------------------------------------------------------
     # Frame versturen
@@ -711,11 +775,11 @@ class HoofdVenster(QMainWindow):
     def _vul_broadcast_in(self):
         self.dst_mac_edit.setText(BROADCAST_MAC)
 
-    def _modus_gewijzigd(self, index):
-        sleutel = self.modus_combo.itemData(index)
-        if sleutel is None:
+    def _modus_actie_gekozen(self):
+        actie = self.sender()
+        if actie is None:
             return
-        self._toepassen_modus(sleutel)
+        self._toepassen_modus(actie.data())
 
     def _toepassen_modus(self, modus_sleutel):
         if modus_sleutel == "Mode-A":
@@ -731,6 +795,7 @@ class HoofdVenster(QMainWindow):
             self.protocol_combo.blockSignals(False)
             self._actief_ethertype = protocollen[0][1]
             self.ethertype_stack.setCurrentWidget(self.protocol_combo)
+        self._modus_status_label.setText(f"Modus: {MODUS_OMSCHRIJVING[modus_sleutel]}")
         self._bijwerken_visualisatie()
 
     def _protocol_gewijzigd(self, index):
@@ -761,7 +826,7 @@ class HoofdVenster(QMainWindow):
         )
 
     def _verstuur_frame(self):
-        iface_name = self.iface_combo.currentData()
+        iface_name = self._actieve_interface
         if not iface_name:
             QMessageBox.warning(self, "Fout", "Geen geldige interface geselecteerd.")
             return
@@ -816,7 +881,7 @@ class HoofdVenster(QMainWindow):
             self._stop_sniffer()
 
     def _start_sniffer(self):
-        iface_name = self.iface_combo.currentData()
+        iface_name = self._actieve_interface
         if not iface_name:
             QMessageBox.warning(self, "Fout", "Geen geldige interface geselecteerd.")
             self.sniffer_checkbox.setChecked(False)
