@@ -155,11 +155,135 @@ en negeert in `_verwerk_frame()` elk frame met dat source MAC-adres.
 Geverifieerd: eigen frames (ook met afwijkende hoofdlettering) worden
 geblokkeerd, frames van andere machines komen gewoon door.
 
-## 14. Dit document
+## 14. Eerste versie van dit document
 
 **Verzoek:** Maak `CONVERSATION.md` en push naar de repo.
 
-**Resultaat:** Dit bestand.
+**Resultaat:** Dit bestand (destijds t/m sectie 13).
+
+## 15. README bijwerken met herkomst
+
+**Verzoek:** Vermeld ergens logisch in de README dat de applicatie in
+samenwerking met Claude Code is gemaakt, met een verwijzing naar
+`CONVERSATION.md`.
+
+**Resultaat:** Nieuwe sectie "Herkomst" onderaan de README. (Een eerste
+poging noemde een geraden volledige naam op basis van het e-mailadres —
+dat is teruggedraaid naar een neutralere aanduiding, met het aanbod dit
+aan te passen naar de echte naam.)
+
+## 16. Knop: framegeschiedenis wissen
+
+**Verzoek:** Voeg op het tabblad Ontvangen een knop toe om het lijstje
+ontvangen frames te wissen.
+
+**Resultaat:** "Lijst wissen"-knop die `frame_lijst` leegt en de
+visualisatie terugzet naar de lege staat (los van de bestaande "Log
+wissen", die alleen het tekstlogje leegt).
+
+## 17. Knop: geselecteerd frame openen in Wireshark
+
+**Verzoek:** Voeg een knop toe om het gekozen frame in Wireshark te
+openen.
+
+**Resultaat:** "Open geselecteerd frame in Wireshark"-knop: reconstrueert
+het geselecteerde frame, schrijft het weg als tijdelijk `.pcap`-bestand
+(Scapy's `wrpcap()`) en start Wireshark daarmee via een niet-blokkerende
+`subprocess.Popen`. Duidelijke meldingen bij geen selectie of ontbrekende
+Wireshark-installatie.
+
+## 18. Fix: veldnamen liepen door de uitlegtekst heen
+
+**Verzoek (met screenshot):** Op het tabblad Ontvangen lopen de
+veldnamen onder de framevisualisatie (bijv. "Destination address")
+door de toelichtingstekst eronder heen.
+
+**Resultaat:** Oorzaak was te weinig gereserveerde ruimte voor 2-regelige
+veldnamen op echte systeemfonts, zonder clipping. Opgelost door de
+gereserveerde ruimte te vergroten, de veldnaam-tekst te clippen op het
+widget-oppervlak (zoals de waardetekst al was), en wat extra verticale
+marge toe te voegen. Voor het eerst getest met écht lettertype-rendering
+offscreen (via `QT_QPA_FONTDIR`), waarmee dit soort problemen pas goed
+zichtbaar werden.
+
+## 19. Menubalk met Instellingen
+
+**Verzoek:** Maak een menubalk bovenin met een optie "Instellingen"; zet
+daar de interface- en modus-keuze in als subopties.
+
+**Resultaat:** Menubalk → "Instellingen" → submenu's "Interface" en
+"Modus" (checkbare, exclusieve acties i.p.v. de eerdere comboboxen boven
+de tabs), met een statusbalk onderin die de actieve interface/modus blijft
+tonen. Tijdens het testen kwam een **echte layoutbug** aan het licht: bij
+een groot/gemaximaliseerd venster rekte de EtherType-rij (en later ook
+`FrameVisualisatieWidget`) enorm uit, omdat die widgets als enige geen
+"Fixed" verticale size policy hadden. Opgelost met expliciete size
+policies, `setFixedHeight()` i.p.v. `setMinimumHeight()`, en
+`addStretch()` onderaan de tabs zodat overtollige ruimte netjes onderaan
+blijft.
+
+## 20. Mijlpaal-tag
+
+**Verzoek:** Markeer de laatste commit als mijlpaal voor het
+Ethernet-gedeelte, zodat er later naar teruggegaan kan worden als iets
+misgaat.
+
+**Resultaat:** Annotated git-tag `ethernet-milestone` aangemaakt en
+gepusht, met uitleg hoe terug te keren (`git checkout`/`git reset --hard
+ethernet-milestone`).
+
+## 21. ARP-functionaliteit in Mode-B (eerste versie)
+
+**Verzoek:** Bouw ARP verder uit in Mode-B: als EtherType ARP gekozen is,
+laat onder de EtherType-lijst "Soort ARP" (aanvraag/antwoord) en een
+vrij IP-adresveld verschijnen. Bij een aanvraag: Destination MAC wordt
+broadcast, payload wordt "Wie heeft IP adres ..., vertel het mij." (waarbij
+"mij" naar het Source MAC-veld verwijst).
+
+**Resultaat:** ARP-subpaneel toegevoegd (zichtbaar zodra het actieve
+EtherType ARP is, dus vanaf Mode-B). Bij een aanvraag wordt Destination
+MAC geforceerd op broadcast en de payload automatisch gegenereerd; bij
+een antwoord blijft Destination MAC handmatig invulbaar (unicast) en
+wordt de payload "IP-adres ... hoort bij mij." Op dat moment werd het
+EtherType-veld van het frame wel op 0x0806 gezet, maar de payload was
+gewoon de leesbare tekst — dus nog geen geldig ARP-pakket (gecorrigeerd
+in de volgende stap).
+
+## 22. Correctie: écht geldig ARP-pakket versturen + ARP ontvangen
+
+**Verzoek:** De visualisatie is uitstekend en blijft ongewijzigd, maar
+het daadwerkelijk verzonden frame moet een *echt geldig* ARP-verzoek
+zijn (de student hoeft de binaire werkelijkheid niet te zien — de
+visualisatie is genoeg). Pas daarnaast de ontvangstkant aan (alleen in
+Mode-B) zodat men kan kiezen om ARP-verkeer te zien; dat betekent dat
+al het ARP-verkeer op het segment getoond wordt, niet alleen dat van de
+labpartner — geaccepteerd als prima voor een labopstelling.
+
+**Resultaat:**
+- Nieuwe `_bouw_echt_arp_frame()`: bouwt een echte `Ether()/ARP()` met
+  Scapy (RFC 826) — `op=1` (who-has) met broadcast-dst voor een
+  aanvraag, `op=2` (is-at) met de handmatige dst voor een antwoord.
+  Bevestigd via Scapy's eigen `.summary()` ("ARP who has ...") en een
+  framegrootte van 42 bytes — een echt herkenbaar ARP-pakket.
+- `SnifferThread` accepteert nu een `ethertype`-parameter en bouwt zijn
+  eigen BPF-filter; ontvangen echte ARP-pakketten worden via de nieuwe
+  gedeelde functie `arp_bericht_tekst()` teruggezet naar dezelfde
+  leesbare tekst als aan de verzendkant.
+- Nieuwe "EtherType om te sniffen"-keuzelijst op het Ontvangen-tabblad,
+  alleen zichtbaar vanaf Mode-B, met een waarschuwing dat ARP-verkeer
+  van het hele segment getoond wordt.
+- Bewuste consequentie: de FCS/framegrootte die de verzender ziet
+  (gebaseerd op de fictieve payload) komt niet meer overeen met wat de
+  ontvanger bij een écht ARP-pakket (28 bytes) ziet — een onvermijdelijk
+  gevolg van het loskoppelen van visualisatie en daadwerkelijke
+  verzending.
+
+## 23. Dit document bijwerken
+
+**Verzoek:** Werk `CONVERSATION.md` bij met alle nieuwe wijzigingen en
+push.
+
+**Resultaat:** Secties 15 t/m 23 toegevoegd.
 
 ---
 
