@@ -302,7 +302,7 @@ class FrameVisualisatieWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumHeight(130)
+        self.setMinimumHeight(150)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._velden = []
         self._leeg_bericht = ""
@@ -360,7 +360,7 @@ class FrameVisualisatieWidget(QWidget):
 
         marge = 8
         top = 22
-        onder_ruimte = 34
+        onder_ruimte = 48
         hoogte_box = max(30, self.height() - top - onder_ruimte)
         beschikbare_breedte = self.width() - 2 * marge
 
@@ -414,7 +414,11 @@ class FrameVisualisatieWidget(QWidget):
             )
             painter.restore()
 
-            # veldnaam, klein, ONDER de box
+            # veldnaam, klein, ONDER de box — geclipt op het eigen
+            # widget-oppervlak zodat een (te) lang woord nooit doorloopt
+            # in wat daaronder in de lay-out staat.
+            painter.save()
+            painter.setClipRect(QRectF(x, 0, breedte, self.height()))
             font_naam = QFont(basis_font)
             font_naam.setPointSize(7)
             font_naam.setItalic(True)
@@ -426,6 +430,7 @@ class FrameVisualisatieWidget(QWidget):
                 int(Qt.AlignmentFlag.AlignHCenter) | int(Qt.AlignmentFlag.AlignTop) | int(Qt.TextFlag.TextWordWrap),
                 naam,
             )
+            painter.restore()
 
             x += breedte
 
@@ -559,6 +564,7 @@ class HoofdVenster(QMainWindow):
         visualisatie_layout = QVBoxLayout()
         self.frame_visualisatie = FrameVisualisatieWidget()
         visualisatie_layout.addWidget(self.frame_visualisatie)
+        visualisatie_layout.addSpacing(8)
         visualisatie_uitleg = QLabel(
             "Preamble en FCS (grijs) tonen illustratieve waarden — in "
             "werkelijkheid worden die door de netwerkkaart toegevoegd "
@@ -606,6 +612,7 @@ class HoofdVenster(QMainWindow):
             "inkomend verkeer met EtherType 0x88B5."
         )
         sniffer_layout.addWidget(self.ontvangst_visualisatie)
+        sniffer_layout.addSpacing(8)
         ontvangst_uitleg = QLabel(
             "Toont het geselecteerde frame uit de lijst hieronder, op "
             "dezelfde manier weergegeven als bij de verzendende student — "
