@@ -1082,11 +1082,19 @@ class HoofdVenster(QMainWindow):
         IP-pakket zijn. Protocolnummer 253 is gereserveerd voor
         experimenteel/testgebruik (RFC 3692), zodat dit nooit met
         TCP/UDP/ICMP verward wordt.
+
+        Source IP valt, als die leeg is, terug op "0.0.0.0" — expliciet,
+        i.p.v. dit aan Scapy's src=None over te laten. Scapy zoekt bij
+        None namelijk zelf een "passende" bron-IP op via de routetabel
+        van het systeem (bijv. "10.0.0.254"), wat niet overeenkomt met
+        wat de visualisatie toont ("0.0.0.0") en per lab-pc kan
+        verschillen. Met deze expliciete fallback blijft de belofte
+        "visualisatie = werkelijkheid" ook in dit geval gelden.
         """
         dst_ip = self.ipv4_dst_ip_edit.text().strip()
         src_ip = self.ipv4_src_ip_edit.text().strip()
         payload_tekst = self.payload_edit.text()
-        ip_laag = IP(dst=dst_ip, src=src_ip or None, proto=IPV4_CUSTOM_PROTO) / payload_tekst.encode("utf-8")
+        ip_laag = IP(dst=dst_ip, src=src_ip or "0.0.0.0", proto=IPV4_CUSTOM_PROTO) / payload_tekst.encode("utf-8")
         return Ether(dst=dst_mac, src=src_mac or None, type=IPV4_ETHERTYPE) / ip_laag
 
     def _bijwerken_protocol_status(self):

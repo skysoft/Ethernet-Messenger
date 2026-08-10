@@ -75,6 +75,20 @@ zien hoe Ethernet framing, MAC-adressering en EtherType werken.
   (alle velden op de rij blijven even hoog), zodat zonder extra
   uitlegtekst direct duidelijk is dat het IP-pakket de Ethernet-payload
   ís.
+
+  Destination MAC en Destination IP zijn bewust volledig onafhankelijk
+  van elkaar in te vullen — bijvoorbeeld een broadcast Destination MAC
+  (`ff:ff:ff:ff:ff:ff`) combineren met een unicast Destination IP is
+  toegestaan en **realistisch**: Ethernet- en IP-adressering zijn twee
+  losse lagen. Op de kabel ontvangt dan elk apparaat op het segment het
+  frame (want broadcast op MAC-niveau), maar alleen het apparaat met dat
+  specifieke IP-adres verwerkt het ook echt op IP-niveau — de rest
+  negeert het stilletjes. Dit is inefficiënter dan de normale gang van
+  zaken (vandaar dat besturingssystemen altijd eerst ARP doen), maar
+  functioneel gewoon geldig, en illustreert mooi dat MAC- en
+  IP-adressering onafhankelijke lagen zijn. Laat je Source IP leeg, dan
+  valt die terug op `0.0.0.0` — zowel in de visualisatie als in het
+  daadwerkelijk verzonden pakket (dus geen afwijking tussen de twee).
 - **ARP en IPv4 ontvangen (Mode-B resp. Mode-C en hoger)**: op het
   tabblad Ontvangen verschijnt dan een keuzelijst "EtherType om te
   sniffen" (Ethernet, ARP en/of IPv4, afhankelijk van de gekozen modus)
