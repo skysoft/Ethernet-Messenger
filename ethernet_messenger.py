@@ -49,7 +49,20 @@ from PyQt6.QtWidgets import (
 )
 
 try:
-    from scapy.all import Ether, ARP, IP, sendp, sniff, get_if_list, get_if_hwaddr, get_if_addr, conf, wrpcap
+    from scapy.all import (
+        Ether,
+        ARP,
+        IP,
+        IPv6,
+        sendp,
+        sniff,
+        get_if_list,
+        get_if_hwaddr,
+        get_if_addr,
+        get_if_addr6,
+        conf,
+        wrpcap,
+    )
 except ImportError:
     print(
         "Scapy is niet geïnstalleerd. Installeer het met:\n"
@@ -62,17 +75,20 @@ except ImportError:
 DEFAULT_ETHERTYPE = 0x88B5  # gereserveerd voor experimenteel/onderwijsgebruik
 ARP_ETHERTYPE = 0x0806
 IPV4_ETHERTYPE = 0x0800
-IPV4_CUSTOM_PROTO = 253  # gereserveerd voor experimenteel/testgebruik (RFC 3692)
+IPV6_ETHERTYPE = 0x86DD
+# Gereserveerd voor experimenteel/testgebruik (RFC 3692). Dit is één
+# gedeelde IANA-protocolnummerruimte: hetzelfde getal wordt gebruikt in
+# het IPv4 "Protocol"-veld én het IPv6 "Next Header"-veld.
+CUSTOM_PROTOCOL_NUMMER = 253
 BROADCAST_MAC = "ff:ff:ff:ff:ff:ff"
 MIN_DATA_BYTES = 46  # minimale grootte van het Data-veld (Ethernet-norm)
 
 # Modi: elke volgende modus voegt protocol-opties toe aan de te kiezen
-# EtherType bij het opbouwen van een frame. Ethernet, ARP en IPv4 zijn
-# functioneel uitgewerkt (ARP als leesbare pseudo-ARP-tekst, zie
-# _arp_payload_tekst; IPv4 als een echt, geldig IP-pakket met een
-# experimenteel protocolnummer, zie _bouw_echt_ipv4_frame); IPv6 staat
-# er voorlopig alleen ter illustratie bij, wordt in een latere fase
-# functioneel uitgewerkt.
+# EtherType bij het opbouwen van een frame. Ethernet, ARP, IPv4 en IPv6
+# zijn functioneel uitgewerkt: ARP als leesbare pseudo-ARP-tekst (zie
+# _arp_payload_tekst), IPv4 en IPv6 als een echt, geldig IP-pakket met
+# een experimenteel protocolnummer (zie _bouw_echt_ipv4_frame /
+# _bouw_echt_ipv6_frame).
 MODUS_PROTOCOLLEN = {
     "Mode-A": [("Ethernet (0x88B5)", DEFAULT_ETHERTYPE)],
     "Mode-B": [("Ethernet (0x88B5)", DEFAULT_ETHERTYPE), ("ARP (0x0806)", ARP_ETHERTYPE)],
@@ -85,7 +101,7 @@ MODUS_PROTOCOLLEN = {
         ("Ethernet (0x88B5)", DEFAULT_ETHERTYPE),
         ("ARP (0x0806)", ARP_ETHERTYPE),
         ("IPv4 (0x0800)", IPV4_ETHERTYPE),
-        ("IPv6 (0x86DD)", 0x86DD),
+        ("IPv6 (0x86DD)", IPV6_ETHERTYPE),
     ],
 }
 MODUS_OMSCHRIJVING = {
@@ -96,9 +112,7 @@ MODUS_OMSCHRIJVING = {
 }
 
 # Welke EtherTypes de ontvangstkant (sniffer) daadwerkelijk kan
-# decoderen, per modus. IPv6 staat nog niet in deze lijst (nog geen
-# decodering gebouwd), ook niet in Mode-D — dat is een bewuste,
-# stapsgewijze beperking.
+# decoderen, per modus.
 ONTVANGST_ETHERTYPES = {
     "Mode-A": [("Ethernet (0x88B5)", DEFAULT_ETHERTYPE)],
     "Mode-B": [("Ethernet (0x88B5)", DEFAULT_ETHERTYPE), ("ARP (0x0806)", ARP_ETHERTYPE)],
@@ -111,6 +125,7 @@ ONTVANGST_ETHERTYPES = {
         ("Ethernet (0x88B5)", DEFAULT_ETHERTYPE),
         ("ARP (0x0806)", ARP_ETHERTYPE),
         ("IPv4 (0x0800)", IPV4_ETHERTYPE),
+        ("IPv6 (0x86DD)", IPV6_ETHERTYPE),
     ],
 }
 
@@ -327,7 +342,20 @@ class SnifferThread(threading.Thread):
                 payload_str = bytes(ip_laag.payload).decode("utf-8", errors="replace")
             except Exception:
                 payload_str = repr(bytes(ip_laag.payload))
-            ip_info = (ip_laag.dst, ip_laag.src, payload_str)
+            ip_info = (ip_laag.dst, ip_laag.src, payload_str, "IP")
+        elif self.ethertype == IPV6_ETHERTYPE:
+            # Zelfde aanpak als bij IPv4 hierboven, maar dan voor de
+            # IPv6-laag (die een "Next Header"-veld heeft in plaats van
+            # een "Protocol"-veld, maar verder qua opbouw vergelijkbaar
+            # is).
+            if not pkt.haslayer(IPv6):
+                return
+            ipv6_laag = pkt[IPv6]
+            try:
+                payload_str = bytes(ipv6_laag.payload).decode("utf-8", errors="replace")
+            except Exception:
+                payload_str = repr(bytes(ipv6_laag.payload))
+            ip_info = (ipv6_laag.dst, ipv6_laag.src, payload_str, "IPv6")
         else:
             werkelijke_payload, _ = ontleed_payload(raw_payload)
             try:
@@ -401,12 +429,15 @@ class FrameVisualisatieWidget(QWidget):
         data_bytes: de volledige, al aangevulde inhoud van het Data-veld
             zoals die daadwerkelijk verstuurd zou worden (lengteveld +
             tekst + eventuele padding).
-        ip_info: optioneel (dst_ip, src_ip, ip_payload_tekst). Als gezet,
-            wordt het Data-veld getekend als een genest IPv4-pakket
-            (Destination IP / Source IP / Data) BINNEN dezelfde
+        ip_info: optioneel (dst_ip, src_ip, ip_payload_tekst, veldnaam_ip).
+            Als gezet, wordt het Data-veld getekend als een genest
+            IP-pakket (Destination IP / Source IP / Data) BINNEN dezelfde
             Data-box, in plaats van gewoon de payloadtekst te tonen —
             zodat visueel duidelijk is dat het IP-pakket in het
-            Data-gebied van het Ethernet frame zit.
+            Data-gebied van het Ethernet frame zit. Wordt zowel voor
+            IPv4 als IPv6 gebruikt; veldnaam_ip bepaalt of de labels
+            "Destination IP"/"Source IP" of "Destination IPv6"/
+            "Source IPv6" tonen.
         """
         fcs_bytes = bereken_dummy_fcs(dst_mac, src_mac, ethertype_int, data_bytes)
 
@@ -419,10 +450,10 @@ class FrameVisualisatieWidget(QWidget):
             ("FCS", len(fcs_bytes), fcs_bytes.hex(" ").upper()),
         ]
         if ip_info:
-            dst_ip, src_ip, ip_payload_tekst = ip_info
+            dst_ip, src_ip, ip_payload_tekst, veldnaam_ip = ip_info
             self._geneste_ip_velden = [
-                ("Destination IP", dst_ip or "-"),
-                ("Source IP", src_ip or "-"),
+                (f"Destination {veldnaam_ip}", dst_ip or "-"),
+                (f"Source {veldnaam_ip}", src_ip or "-"),
                 ("Data", ip_payload_tekst if ip_payload_tekst else "(leeg)"),
             ]
         else:
@@ -766,16 +797,33 @@ class HoofdVenster(QMainWindow):
         self.ipv4_opties_widget.setVisible(False)
         frame_layout.addRow(self.ipv4_opties_widget)
 
+        # IPv6-subopties: alleen zichtbaar als het actieve EtherType
+        # IPv6 is (dus vanaf Mode-D). Zelfde opzet als bij IPv4:
+        # Destination MAC en Payload blijven gewoon vrij invulbaar.
+        self.ipv6_opties_widget = QWidget()
+        ipv6_opties_layout = QFormLayout(self.ipv6_opties_widget)
+        ipv6_opties_layout.setContentsMargins(0, 0, 0, 0)
+        self.ipv6_dst_ip_edit = QLineEdit()
+        self.ipv6_dst_ip_edit.setPlaceholderText("bijv. fe80::1a2b:3c4d:5e6f:7a8b")
+        self.ipv6_dst_ip_edit.textChanged.connect(self._bijwerken_visualisatie)
+        ipv6_opties_layout.addRow("Destination IPv6:", self.ipv6_dst_ip_edit)
+        self.ipv6_src_ip_edit = QLineEdit()
+        self.ipv6_src_ip_edit.setPlaceholderText("bijv. fe80::aabb:ccdd:eeff:1122")
+        self.ipv6_src_ip_edit.textChanged.connect(self._bijwerken_visualisatie)
+        ipv6_opties_layout.addRow("Source IPv6:", self.ipv6_src_ip_edit)
+        self.ipv6_opties_widget.setVisible(False)
+        frame_layout.addRow(self.ipv6_opties_widget)
+
         modus_uitleg = QLabel(
             "Mode-A biedt alleen Ethernet-framing (de huidige "
             "functionaliteit). Vanaf Mode-B (Instellingen → Modus) "
             "verschijnen er extra protocol-opties bij het opbouwen van "
-            "een frame, ter voorbereiding op latere uitbreidingen. "
-            "Ethernet, ARP en IPv4 kunnen daadwerkelijk verzonden én "
-            "ontvangen worden (de ARP-payload is een leesbare "
-            "pseudo-ARP-tekst, geen echte binaire ARP-structuur; het "
-            "IPv4-pakket gebruikt protocolnummer 253, gereserveerd voor "
-            "experimenteel gebruik); IPv6 is nog niet functioneel."
+            "een frame. Ethernet, ARP, IPv4 en IPv6 kunnen allemaal "
+            "daadwerkelijk verzonden én ontvangen worden (de "
+            "ARP-payload is een leesbare pseudo-ARP-tekst, geen echte "
+            "binaire ARP-structuur; het IPv4- en IPv6-pakket gebruiken "
+            "protocolnummer 253, gereserveerd voor experimenteel "
+            "gebruik)."
         )
         modus_uitleg.setWordWrap(True)
         modus_uitleg.setStyleSheet("color: #666666; font-size: 11px;")
@@ -845,7 +893,7 @@ class HoofdVenster(QMainWindow):
         self.ontvangst_ethertype_combo.addItem("Ethernet (0x88B5)", DEFAULT_ETHERTYPE)
         ontvangst_ethertype_layout.addRow("EtherType om te sniffen:", self.ontvangst_ethertype_combo)
         ontvangst_ethertype_uitleg = QLabel(
-            "Let op: bij ARP of IPv4 wordt al dat verkeer op dit "
+            "Let op: bij ARP, IPv4 of IPv6 wordt al dat verkeer op dit "
             "netwerksegment getoond (van alle apparaten, niet alleen "
             "van je labpartner) — normaal in een lab-opstelling."
         )
@@ -988,9 +1036,20 @@ class HoofdVenster(QMainWindow):
                 self.ipv4_src_ip_edit.setText(ip if ip and ip != "0.0.0.0" else "")
             except Exception:
                 self.ipv4_src_ip_edit.setText("")
+            try:
+                # get_if_addr6() geeft het globale (routeerbare) IPv6-
+                # adres van de interface terug, of None als dat er niet
+                # is (bijv. alleen een link-local fe80::-adres) — dan
+                # laten we het veld leeg zodat de student het zelf kan
+                # invullen, net als bij IPv4.
+                ip6 = get_if_addr6(iface_name)
+                self.ipv6_src_ip_edit.setText(ip6 or "")
+            except Exception:
+                self.ipv6_src_ip_edit.setText("")
         else:
             self.src_mac_edit.setText("")
             self.ipv4_src_ip_edit.setText("")
+            self.ipv6_src_ip_edit.setText("")
         self._interface_status_label.setText(f"Interface: {iface_name or '—'}")
 
     # ------------------------------------------------------------------
@@ -1094,8 +1153,29 @@ class HoofdVenster(QMainWindow):
         dst_ip = self.ipv4_dst_ip_edit.text().strip()
         src_ip = self.ipv4_src_ip_edit.text().strip()
         payload_tekst = self.payload_edit.text()
-        ip_laag = IP(dst=dst_ip, src=src_ip or "0.0.0.0", proto=IPV4_CUSTOM_PROTO) / payload_tekst.encode("utf-8")
+        ip_laag = IP(dst=dst_ip, src=src_ip or "0.0.0.0", proto=CUSTOM_PROTOCOL_NUMMER) / payload_tekst.encode("utf-8")
         return Ether(dst=dst_mac, src=src_mac or None, type=IPV4_ETHERTYPE) / ip_laag
+
+    def _bouw_echt_ipv6_frame(self, dst_mac, src_mac):
+        """
+        Bouwt het daadwerkelijk te verzenden IPv6-pakket op. Zelfde
+        aanpak als _bouw_echt_ipv4_frame(): de vrije payloadtekst is
+        letterlijk de inhoud van het pakket, en hetzelfde experimentele
+        protocolnummer (253, RFC 3692) wordt hier gebruikt als IPv6's
+        "Next Header"-veld — dat is dezelfde protocolnummerruimte als
+        IPv4's "Protocol"-veld.
+
+        Source IPv6 valt, als die leeg is, terug op "::" (het IPv6-
+        equivalent van "0.0.0.0", de unspecified address) — expliciet,
+        om dezelfde reden als bij IPv4: zonder expliciete fallback zou
+        Scapy zelf een "passend" bronadres kunnen kiezen, wat niet meer
+        overeen zou komen met wat de visualisatie toont.
+        """
+        dst_ip = self.ipv6_dst_ip_edit.text().strip()
+        src_ip = self.ipv6_src_ip_edit.text().strip()
+        payload_tekst = self.payload_edit.text()
+        ipv6_laag = IPv6(dst=dst_ip, src=src_ip or "::", nh=CUSTOM_PROTOCOL_NUMMER) / payload_tekst.encode("utf-8")
+        return Ether(dst=dst_mac, src=src_mac or None, type=IPV6_ETHERTYPE) / ipv6_laag
 
     def _bijwerken_protocol_status(self):
         """
@@ -1104,14 +1184,16 @@ class HoofdVenster(QMainWindow):
         payload af in de gewone velden (die daarvoor tijdelijk
         uitgeschakeld worden) — zodat de rest van de applicatie
         (visualisatie, versturen) ongewijzigd gewoon dst_mac_edit/
-        payload_edit kan blijven uitlezen. Bij IPv4 blijven Destination
-        MAC en Payload gewoon vrij invulbaar (de student vult zowel MAC
-        als IP zelf in).
+        payload_edit kan blijven uitlezen. Bij IPv4 en IPv6 blijven
+        Destination MAC en Payload gewoon vrij invulbaar (de student
+        vult zowel MAC als IP zelf in).
         """
         is_arp = self._actief_ethertype == ARP_ETHERTYPE
         is_ipv4 = self._actief_ethertype == IPV4_ETHERTYPE
+        is_ipv6 = self._actief_ethertype == IPV6_ETHERTYPE
         self.arp_opties_widget.setVisible(is_arp)
         self.ipv4_opties_widget.setVisible(is_ipv4)
+        self.ipv6_opties_widget.setVisible(is_ipv6)
 
         if not is_arp:
             self.dst_mac_edit.setEnabled(True)
@@ -1141,14 +1223,27 @@ class HoofdVenster(QMainWindow):
         if self._actief_ethertype == IPV4_ETHERTYPE:
             dst_ip = self.ipv4_dst_ip_edit.text().strip()
             src_ip = self.ipv4_src_ip_edit.text().strip()
-            ip_info = (dst_ip, src_ip, payload_tekst)
+            ip_info = (dst_ip, src_ip, payload_tekst, "IP")
             # De payload is hier al de vrije tekst zelf (geen kunstmatige
             # zinsconstructie zoals bij ARP), dus de visualisatie kan de
             # ECHTE pakketbytes tonen — in tegenstelling tot ARP is er
             # dus geen afwijking tussen visualisatie en werkelijkheid.
             try:
                 data_bytes = bytes(
-                    IP(dst=dst_ip or "0.0.0.0", src=src_ip or "0.0.0.0", proto=IPV4_CUSTOM_PROTO)
+                    IP(dst=dst_ip or "0.0.0.0", src=src_ip or "0.0.0.0", proto=CUSTOM_PROTOCOL_NUMMER)
+                    / payload_tekst.encode("utf-8")
+                )
+            except Exception:
+                data_bytes = b""
+        elif self._actief_ethertype == IPV6_ETHERTYPE:
+            dst_ip = self.ipv6_dst_ip_edit.text().strip()
+            src_ip = self.ipv6_src_ip_edit.text().strip()
+            ip_info = (dst_ip, src_ip, payload_tekst, "IPv6")
+            # Zelfde principe als bij IPv4: echte pakketbytes, dus geen
+            # afwijking tussen visualisatie en werkelijkheid.
+            try:
+                data_bytes = bytes(
+                    IPv6(dst=dst_ip or "::", src=src_ip or "::", nh=CUSTOM_PROTOCOL_NUMMER)
                     / payload_tekst.encode("utf-8")
                 )
             except Exception:
@@ -1174,15 +1269,16 @@ class HoofdVenster(QMainWindow):
             QMessageBox.warning(self, "Fout", "Geen geldige interface geselecteerd.")
             return
 
-        if self._actief_ethertype not in (DEFAULT_ETHERTYPE, ARP_ETHERTYPE, IPV4_ETHERTYPE):
+        if self._actief_ethertype not in (DEFAULT_ETHERTYPE, ARP_ETHERTYPE, IPV4_ETHERTYPE, IPV6_ETHERTYPE):
             QMessageBox.information(
                 self,
                 "Nog niet beschikbaar",
                 "Dit protocol is in deze versie nog niet functioneel "
                 "geïmplementeerd — er kan op dit moment alleen "
-                "daadwerkelijk Ethernet (0x88B5), ARP (0x0806) en IPv4 "
-                "(0x0800) verzonden worden. Kies een van die in de "
-                "protocollijst, of zet de modus terug naar Mode-A.",
+                "daadwerkelijk Ethernet (0x88B5), ARP (0x0806), IPv4 "
+                "(0x0800) en IPv6 (0x86DD) verzonden worden. Kies een "
+                "van die in de protocollijst, of zet de modus terug "
+                "naar Mode-A.",
             )
             return
 
@@ -1192,6 +1288,10 @@ class HoofdVenster(QMainWindow):
 
         if self._actief_ethertype == IPV4_ETHERTYPE and not self.ipv4_dst_ip_edit.text().strip():
             QMessageBox.warning(self, "Fout", "Vul een Destination IP in.")
+            return
+
+        if self._actief_ethertype == IPV6_ETHERTYPE and not self.ipv6_dst_ip_edit.text().strip():
+            QMessageBox.warning(self, "Fout", "Vul een Destination IPv6 in.")
             return
 
         src_mac = self.src_mac_edit.text().strip()
@@ -1215,6 +1315,8 @@ class HoofdVenster(QMainWindow):
                 frame = self._bouw_echt_arp_frame(dst_mac, src_mac)
             elif self._actief_ethertype == IPV4_ETHERTYPE:
                 frame = self._bouw_echt_ipv4_frame(dst_mac, src_mac)
+            elif self._actief_ethertype == IPV6_ETHERTYPE:
+                frame = self._bouw_echt_ipv6_frame(dst_mac, src_mac)
             else:
                 frame = Ether(dst=dst_mac, src=src_mac or None, type=self._actief_ethertype) / bouw_payload_bytes(payload_tekst)
             sendp(frame, iface=iface_name, verbose=False)

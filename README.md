@@ -30,10 +30,8 @@ zien hoe Ethernet framing, MAC-adressering en EtherType werken.
   Mode-A (standaard) komt overeen met de bestaande Ethernet-werking
   (vast EtherType `0x88B5`). Vanaf Mode-B verschijnt er in plaats van het
   vaste EtherType-label een keuzelijst met extra protocollen (Mode-B:
-  + ARP, Mode-C: + IPv4, Mode-D: + IPv6). Ethernet, ARP én IPv4 kunnen
-  daadwerkelijk verzonden en ontvangen worden; IPv6 staat er voorlopig
-  alleen ter illustratie bij (nog niet functioneel — dat komt in een
-  latere fase).
+  + ARP, Mode-C: + IPv4, Mode-D: + IPv6). Ethernet, ARP, IPv4 én IPv6
+  kunnen allemaal daadwerkelijk verzonden en ontvangen worden.
 - **ARP opbouwen (Mode-B en hoger, EtherType ARP gekozen)**: onder de
   EtherType-keuzelijst verschijnen dan twee extra velden: "Soort ARP"
   ("Verzend ARP aanvraag" of "Verzend ARP antwoord") en een vrij
@@ -89,14 +87,28 @@ zien hoe Ethernet framing, MAC-adressering en EtherType werken.
   IP-adressering onafhankelijke lagen zijn. Laat je Source IP leeg, dan
   valt die terug op `0.0.0.0` — zowel in de visualisatie als in het
   daadwerkelijk verzonden pakket (dus geen afwijking tussen de twee).
-- **ARP en IPv4 ontvangen (Mode-B resp. Mode-C en hoger)**: op het
-  tabblad Ontvangen verschijnt dan een keuzelijst "EtherType om te
-  sniffen" (Ethernet, ARP en/of IPv4, afhankelijk van de gekozen modus)
-  boven de sniffer-checkbox. Bij ARP of IPv4 toont de sniffer al dat
-  verkeer op het netwerksegment — dus van **alle** apparaten, niet
-  alleen van je labpartner, wat op een live netwerk normaal is. Elk
-  ontvangen (echt, binair) ARP- of IP-pakket wordt teruggezet naar
-  dezelfde leesbare weergave als aan de verzendkant.
+- **IPv6 opbouwen (Mode-D en hoger, EtherType IPv6 gekozen)**: werkt
+  volledig analoog aan IPv4 hierboven, met **Destination IPv6** en
+  **Source IPv6** in plaats van de IPv4-velden. Source IPv6 wordt
+  automatisch ingevuld met het globale (routeerbare) IPv6-adres van de
+  gekozen interface, indien aanwezig — anders blijft het leeg. Ook hier
+  blijven Destination MAC en Payload gewoon vrij invulbaar, toont de
+  visualisatie de **echte pakketbytes** (genest in het Data-vak, net als
+  bij IPv4) en wordt er een echt, geldig IPv6-pakket verzonden (Scapy's
+  `IPv6()`-laag) met hetzelfde experimentele protocolnummer **253** in
+  het "Next Header"-veld — dezelfde gereserveerde protocolnummerruimte
+  (RFC 3692) als bij IPv4. Laat je Source IPv6 leeg, dan valt die terug
+  op `::` (het IPv6-equivalent van `0.0.0.0`), zowel in de visualisatie
+  als in het daadwerkelijk verzonden pakket.
+- **ARP, IPv4 en IPv6 ontvangen (Mode-B resp. Mode-C resp. Mode-D en
+  hoger)**: op het tabblad Ontvangen verschijnt dan een keuzelijst
+  "EtherType om te sniffen" (Ethernet, ARP, IPv4 en/of IPv6, afhankelijk
+  van de gekozen modus) boven de sniffer-checkbox. Bij ARP, IPv4 of IPv6
+  toont de sniffer al dat verkeer op het netwerksegment — dus van
+  **alle** apparaten, niet alleen van je labpartner, wat op een live
+  netwerk normaal is. Elk ontvangen (echt, binair) ARP-, IPv4- of
+  IPv6-pakket wordt teruggezet naar dezelfde leesbare weergave als aan
+  de verzendkant.
 - Ethernet frame opbouwen: source MAC (auto-ingevuld, aanpasbaar),
   destination MAC (met snelknop voor broadcast `ff:ff:ff:ff:ff:ff`),
   EtherType (in Mode-A vast op `0x88B5`), vrije tekst payload.

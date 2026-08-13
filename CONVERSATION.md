@@ -285,6 +285,59 @@ push.
 
 **Resultaat:** Secties 15 t/m 23 toegevoegd.
 
+## 24. IPv6-functionaliteit in Mode-D (volledige symmetrie)
+
+**Verzoek:** Ontwikkel Mode-D/IPv6 verder, op dezelfde manier als
+Mode-C/IPv4 is uitgewerkt (sectie 21-22): eerst de aanpak van IPv4
+analyseren, dan iets vergelijkbaars bouwen voor IPv6 — inclusief
+verzenden én ontvangen, meteen volledig symmetrisch (niet eerst alleen
+verzenden).
+
+**Resultaat:**
+- Nieuwe constante `IPV6_ETHERTYPE = 0x86DD` (voorheen hardcoded in
+  `MODUS_PROTOCOLLEN`); `IPV4_CUSTOM_PROTO` hernoemd naar
+  `CUSTOM_PROTOCOL_NUMMER` (253, RFC 3692) omdat dit dezelfde
+  IANA-protocolnummerruimte is die zowel het IPv4 "Protocol"-veld als
+  het IPv6 "Next Header"-veld gebruiken.
+- `ONTVANGST_ETHERTYPES["Mode-D"]` aangevuld met IPv6 (stond er tot nu
+  toe bewust nog niet in, met een commentaar dat de decodering nog
+  gebouwd moest worden — dat is deze stap).
+- Nieuw UI-subblok `ipv6_opties_widget` (Destination IPv6 / Source
+  IPv6), zichtbaar vanaf Mode-D bij EtherType IPv6 — 1-op-1 dezelfde
+  opzet als `ipv4_opties_widget`: Destination MAC en Payload blijven
+  vrij invulbaar.
+- Source IPv6 wordt automatisch ingevuld via Scapy's `get_if_addr6()`
+  (geeft het globale/routeerbare IPv6-adres van de interface, of `None`
+  als dat er niet is — dan blijft het veld leeg, net als bij IPv4).
+- `_bouw_echt_ipv6_frame()`: bouwt een echt, geldig `Ether()/IPv6()`
+  -pakket met `nh=253`. Source IPv6 valt bij leeg veld terug op `::`
+  (IPv6-equivalent van `0.0.0.0`), om dezelfde reden als bij IPv4
+  (anders zou Scapy zelf een bronadres kiezen, wat niet meer zou
+  overeenkomen met de visualisatie).
+- Visualisatie hergebruikt de bestaande "genest IP-pakket in het
+  Data-vak"-tekening; de `ip_info`-tuple kreeg er een vierde element
+  bij (`veldnaam_ip`) zodat dezelfde tekencode zowel "Destination
+  IP"/"Source IP" (IPv4) als "Destination IPv6"/"Source IPv6" (IPv6)
+  kan tonen.
+- `SnifferThread._verwerk_frame()`: nieuwe tak voor
+  `ethertype == IPV6_ETHERTYPE` die `pkt[IPv6]` decodeert naar dezelfde
+  `ip_info`-structuur als de verzendkant.
+- `_verstuur_frame()`: IPv6 toegevoegd aan de functioneel
+  geïmplementeerde protocollen, met validatie op een ingevulde
+  Destination IPv6.
+- Teksten bijgewerkt (`modus_uitleg`-label, module-docstring,
+  sniff-waarschuwing) die eerder nog zeiden dat IPv6 "nog niet
+  functioneel" was.
+- Getest offscreen (`QT_QPA_PLATFORM=offscreen`, PyQt6 + Scapy
+  tijdelijk geïnstalleerd op de ontwikkelmachine): frame bouwen en
+  decoderen gaf consistente resultaten, modus-wisseling toonde/verborg
+  de juiste subvelden (inclusief regressietest dat ARP en Ethernet nog
+  gewoon werkten), en de visualisatie rendert zonder crash met de
+  nieuwe IPv6-velden.
+- README.md bijgewerkt: nieuwe bullet "IPv6 opbouwen", de
+  ontvangst-bullet uitgebreid naar ARP/IPv4/IPv6, en de eerdere
+  "IPv6 is nog niet functioneel"-tekst verwijderd.
+
 ---
 
 *Elke stap hierboven is telkens gevolgd door een syntax-check
