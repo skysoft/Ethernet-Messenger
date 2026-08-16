@@ -13,6 +13,7 @@ Alleen bedoeld voor gecontroleerde lab-/testomgevingen (bijv. Cisco CML
 of een geïsoleerd VLAN), niet voor productienetwerken.
 """
 
+import ipaddress
 import os
 import re
 import struct
@@ -145,9 +146,31 @@ def bouw_payload_bytes(tekst):
     bij ontvangst niet te onderscheiden zijn van de echte payload; met
     het lengteveld kan de ontvanger precies de ingetypte tekst
     terugvinden en de padding herkennen en verbergen.
+
+    Het lengteveld is een 2-byte unsigned int (max 65535); een payload
+    die daar overheen gaat wordt afgekapt in plaats van een onafgevangen
+    struct.error te veroorzaken (bijv. bij het plakken van een zeer
+    lange tekst met veel meerbyte-tekens).
     """
-    inhoud = tekst.encode("utf-8")
+    inhoud = tekst.encode("utf-8")[:65535]
     return struct.pack("!H", len(inhoud)) + inhoud
+
+
+def bouw_ethernet_data_bytes(payload_tekst):
+    """
+    Bouwt de volledige inhoud van het Data-veld voor een gewoon
+    Ethernet-frame: het lengteveld-schema van bouw_payload_bytes(),
+    aangevuld met nulbytes tot MIN_DATA_BYTES. Dit wordt op precies
+    dezelfde manier gebruikt voor zowel de live visualisatie als het
+    daadwerkelijk verzonden frame, zodat die twee nooit uit elkaar
+    kunnen lopen (voorheen paste alleen de visualisatie deze padding
+    toe; het verzonden frame liet dit aan de OS/driver over, wat niet
+    op elke interface gegarandeerd is).
+    """
+    data_bytes = bouw_payload_bytes(payload_tekst)
+    if len(data_bytes) < MIN_DATA_BYTES:
+        data_bytes += b"\x00" * (MIN_DATA_BYTES - len(data_bytes))
+    return data_bytes
 
 
 def ontleed_payload(raw: bytes):
@@ -173,6 +196,32 @@ def ontleed_payload(raw: bytes):
 # door de Start Frame Delimiter (0xAB). Dit is altijd hetzelfde patroon,
 # ongeacht de framegrootte.
 PREAMBLE_BYTES = bytes([0xAA] * 7 + [0xAB])
+
+
+def is_geldig_ipv4(tekst):
+    """
+    Controleert of tekst een syntactisch geldig IPv4-adres is — puur
+    lokaal, zonder netwerkverkeer. Belangrijk verschil met Scapy's
+    IP(dst=...)/src=...: die probeert bij een ongeldige/onvolledige
+    string (bijv. "192." tijdens het typen) een hostnaam op te lossen
+    via een blokkerende DNS-lookup, wat de hele GUI enkele seconden kan
+    bevriezen. Dit wordt hieronder vermeden door zelf eerst te
+    valideren.
+    """
+    try:
+        ipaddress.IPv4Address(tekst)
+        return True
+    except ValueError:
+        return False
+
+
+def effectief_ipv4(tekst):
+    """
+    Geeft tekst terug als het een geldig IPv4-adres is, anders "0.0.0.0"
+    — een veilige, DNS-vrije placeholder voor gebruik in live-preview
+    berekeningen terwijl de gebruiker nog aan het typen is.
+    """
+    return tekst if is_geldig_ipv4(tekst) else "0.0.0.0"
 
 
 def mac_naar_bytes(mac_tekst):
@@ -616,6 +665,7 @@ class HoofdVenster(QMainWindow):
 
         self._actief_ethertype = DEFAULT_ETHERTYPE
         self._actieve_interface = ""
+        self._arp_velden_geforceerd = False
 
         self._bouw_ui()
         self._controleer_root_rechten()
@@ -1114,11 +1164,19 @@ class HoofdVenster(QMainWindow):
         self.ipv4_opties_widget.setVisible(is_ipv4)
 
         if not is_arp:
+            if self._arp_velden_geforceerd:
+                # Net weg van ARP: de automatisch ingevulde broadcast-MAC
+                # en ARP-zin horen niet stilletjes mee te blijven staan
+                # bij een ander protocol.
+                self.dst_mac_edit.clear()
+                self.payload_edit.clear()
+            self._arp_velden_geforceerd = False
             self.dst_mac_edit.setEnabled(True)
             self.payload_edit.setEnabled(True)
             self._bijwerken_visualisatie()
             return
 
+        self._arp_velden_geforceerd = True
         soort = self.arp_soort_combo.currentData()
         if soort == "aanvraag":
             self.dst_mac_edit.setEnabled(False)
@@ -1129,8 +1187,11 @@ class HoofdVenster(QMainWindow):
             self.dst_mac_edit.setEnabled(True)
 
         self.payload_edit.setEnabled(False)
+        # setText() hierboven en hieronder vuurt textChanged, wat al
+        # _bijwerken_visualisatie() aanroept — een extra expliciete
+        # aanroep zou de visualisatie/FCS-berekening per toetsaanslag
+        # in het ARP-IP-veld nodeloos verdubbelen.
         self.payload_edit.setText(self._arp_payload_tekst())
-        self._bijwerken_visualisatie()
 
     def _bijwerken_visualisatie(self):
         dst_mac = self.dst_mac_edit.text().strip()
@@ -1146,17 +1207,23 @@ class HoofdVenster(QMainWindow):
             # zinsconstructie zoals bij ARP), dus de visualisatie kan de
             # ECHTE pakketbytes tonen — in tegenstelling tot ARP is er
             # dus geen afwijking tussen visualisatie en werkelijkheid.
+            # effectief_ipv4() vervangt een (nog) ongeldig/onvolledig
+            # getypt adres door "0.0.0.0" vóórdat Scapy's IP-laag het
+            # ziet — anders probeert Scapy voor elke tussentijdse
+            # typtoestand (bijv. "192.") een hostnaam op te lossen via
+            # een blokkerende DNS-lookup, wat de hele GUI enkele
+            # seconden kan laten bevriezen bij elke toetsaanslag. Het
+            # getoonde ip_info hieronder blijft wel gewoon de letterlijk
+            # ingetypte tekst tonen.
             try:
                 data_bytes = bytes(
-                    IP(dst=dst_ip or "0.0.0.0", src=src_ip or "0.0.0.0", proto=IPV4_CUSTOM_PROTO)
+                    IP(dst=effectief_ipv4(dst_ip), src=effectief_ipv4(src_ip), proto=IPV4_CUSTOM_PROTO)
                     / payload_tekst.encode("utf-8")
                 )
             except Exception:
                 data_bytes = b""
         else:
-            data_bytes = bouw_payload_bytes(payload_tekst)
-            if len(data_bytes) < MIN_DATA_BYTES:
-                data_bytes += b"\x00" * (MIN_DATA_BYTES - len(data_bytes))
+            data_bytes = bouw_ethernet_data_bytes(payload_tekst)
 
         self.frame_visualisatie.toon_frame(
             dst_mac=dst_mac,
@@ -1186,13 +1253,31 @@ class HoofdVenster(QMainWindow):
             )
             return
 
-        if self._actief_ethertype == ARP_ETHERTYPE and not self.arp_ip_edit.text().strip():
-            QMessageBox.warning(self, "Fout", "Vul een IP-adres in voor het ARP-bericht.")
-            return
+        if self._actief_ethertype == ARP_ETHERTYPE:
+            arp_ip_tekst = self.arp_ip_edit.text().strip()
+            if not arp_ip_tekst:
+                QMessageBox.warning(self, "Fout", "Vul een IP-adres in voor het ARP-bericht.")
+                return
+            if not is_geldig_ipv4(arp_ip_tekst):
+                # Vóór het versturen valideren i.p.v. Scapy dit te laten
+                # proberen: een ongeldig adres zou anders bij het
+                # opbouwen van het ARP-pakket een blokkerende
+                # DNS-hostnaam-resolutie kunnen triggeren.
+                QMessageBox.warning(self, "Fout", "IP-adres is geen geldig IPv4-adres.")
+                return
 
-        if self._actief_ethertype == IPV4_ETHERTYPE and not self.ipv4_dst_ip_edit.text().strip():
-            QMessageBox.warning(self, "Fout", "Vul een Destination IP in.")
-            return
+        if self._actief_ethertype == IPV4_ETHERTYPE:
+            dst_ip_tekst = self.ipv4_dst_ip_edit.text().strip()
+            src_ip_tekst = self.ipv4_src_ip_edit.text().strip()
+            if not dst_ip_tekst:
+                QMessageBox.warning(self, "Fout", "Vul een Destination IP in.")
+                return
+            if not is_geldig_ipv4(dst_ip_tekst):
+                QMessageBox.warning(self, "Fout", "Destination IP is geen geldig IPv4-adres.")
+                return
+            if src_ip_tekst and not is_geldig_ipv4(src_ip_tekst):
+                QMessageBox.warning(self, "Fout", "Source IP is geen geldig IPv4-adres.")
+                return
 
         src_mac = self.src_mac_edit.text().strip()
         dst_mac = self.dst_mac_edit.text().strip()
@@ -1216,7 +1301,11 @@ class HoofdVenster(QMainWindow):
             elif self._actief_ethertype == IPV4_ETHERTYPE:
                 frame = self._bouw_echt_ipv4_frame(dst_mac, src_mac)
             else:
-                frame = Ether(dst=dst_mac, src=src_mac or None, type=self._actief_ethertype) / bouw_payload_bytes(payload_tekst)
+                # bouw_ethernet_data_bytes() past dezelfde padding toe
+                # als de live visualisatie, i.p.v. dit aan de OS/driver
+                # over te laten (niet op elke interface gegarandeerd) —
+                # zo blijft "verzonden frame = getoonde preview" gelden.
+                frame = Ether(dst=dst_mac, src=src_mac or None, type=self._actief_ethertype) / bouw_ethernet_data_bytes(payload_tekst)
             sendp(frame, iface=iface_name, verbose=False)
             self._log(
                 f"[VERZONDEN] src={frame.src} dst={frame.dst} "
@@ -1276,6 +1365,14 @@ class HoofdVenster(QMainWindow):
     def _stop_sniffer(self):
         if self.sniffer_thread is not None:
             self.sniffer_thread.stop()
+            # Wacht kort tot de thread zijn sniff()-lus (timeout=1)
+            # daadwerkelijk verlaten heeft, vóórdat de referentie
+            # losgelaten wordt. Zonder dit kon een snelle stop-en-
+            # herstart (bijv. na het wijzigen van het te sniffen
+            # EtherType) een oude, nog actieve thread achterlaten die
+            # per ongeluk nog één frame van het vorige EtherType
+            # binnenhaalt.
+            self.sniffer_thread.join(timeout=1.5)
             self.sniffer_thread = None
             self.ontvangst_ethertype_combo.setEnabled(True)
             self._log("[SNIFFER] Gestopt.")
@@ -1314,8 +1411,13 @@ class HoofdVenster(QMainWindow):
         )
 
     def _ontvangst_ethertype_gewijzigd(self, index):
-        if self.frame_lijst.count() == 0:
-            self.ontvangst_visualisatie.toon_leeg(self._leeg_bericht_tekst())
+        # Altijd terug naar de lege staat, ook als de geschiedenislijst
+        # nog frames van een ander EtherType bevat — anders bleef een
+        # oud frame (met een inmiddels niet meer kloppend EtherType)
+        # zichtbaar staan alsof dat nog steeds actueel was. De
+        # geschiedenis zelf blijft gewoon staan; die is nog steeds
+        # aan te klikken.
+        self.ontvangst_visualisatie.toon_leeg(self._leeg_bericht_tekst())
 
     def _leeg_bericht_tekst(self):
         ethertype = (

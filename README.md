@@ -89,6 +89,9 @@ zien hoe Ethernet framing, MAC-adressering en EtherType werken.
   IP-adressering onafhankelijke lagen zijn. Laat je Source IP leeg, dan
   valt die terug op `0.0.0.0` — zowel in de visualisatie als in het
   daadwerkelijk verzonden pakket (dus geen afwijking tussen de twee).
+  IP-adresvelden worden lokaal gevalideerd (zonder DNS-verkeer) vóórdat
+  ze aan Scapy worden doorgegeven, zodat een onvolledig of ongeldig
+  adres nooit een hang van de hele applicatie kan veroorzaken.
 - **ARP en IPv4 ontvangen (Mode-B resp. Mode-C en hoger)**: op het
   tabblad Ontvangen verschijnt dan een keuzelijst "EtherType om te
   sniffen" (Ethernet, ARP en/of IPv4, afhankelijk van de gekozen modus)
