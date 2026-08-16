@@ -285,6 +285,113 @@ push.
 
 **Resultaat:** Secties 15 t/m 23 toegevoegd.
 
+## 24. IPv6-functionaliteit in Mode-D (volledige symmetrie)
+
+**Verzoek:** Ontwikkel Mode-D/IPv6 verder, op dezelfde manier als
+Mode-C/IPv4 is uitgewerkt (sectie 21-22): eerst de aanpak van IPv4
+analyseren, dan iets vergelijkbaars bouwen voor IPv6 — inclusief
+verzenden én ontvangen, meteen volledig symmetrisch (niet eerst alleen
+verzenden).
+
+**Resultaat:**
+- Nieuwe constante `IPV6_ETHERTYPE = 0x86DD` (voorheen hardcoded in
+  `MODUS_PROTOCOLLEN`); `IPV4_CUSTOM_PROTO` hernoemd naar
+  `CUSTOM_PROTOCOL_NUMMER` (253, RFC 3692) omdat dit dezelfde
+  IANA-protocolnummerruimte is die zowel het IPv4 "Protocol"-veld als
+  het IPv6 "Next Header"-veld gebruiken.
+- `ONTVANGST_ETHERTYPES["Mode-D"]` aangevuld met IPv6 (stond er tot nu
+  toe bewust nog niet in, met een commentaar dat de decodering nog
+  gebouwd moest worden — dat is deze stap).
+- Nieuw UI-subblok `ipv6_opties_widget` (Destination IPv6 / Source
+  IPv6), zichtbaar vanaf Mode-D bij EtherType IPv6 — 1-op-1 dezelfde
+  opzet als `ipv4_opties_widget`: Destination MAC en Payload blijven
+  vrij invulbaar.
+- Source IPv6 wordt automatisch ingevuld via Scapy's `get_if_addr6()`
+  (geeft het globale/routeerbare IPv6-adres van de interface, of `None`
+  als dat er niet is — dan blijft het veld leeg, net als bij IPv4).
+- `_bouw_echt_ipv6_frame()`: bouwt een echt, geldig `Ether()/IPv6()`
+  -pakket met `nh=253`. Source IPv6 valt bij leeg veld terug op `::`
+  (IPv6-equivalent van `0.0.0.0`), om dezelfde reden als bij IPv4
+  (anders zou Scapy zelf een bronadres kiezen, wat niet meer zou
+  overeenkomen met de visualisatie).
+- Visualisatie hergebruikt de bestaande "genest IP-pakket in het
+  Data-vak"-tekening; de `ip_info`-tuple kreeg er een vierde element
+  bij (`veldnaam_ip`) zodat dezelfde tekencode zowel "Destination
+  IP"/"Source IP" (IPv4) als "Destination IPv6"/"Source IPv6" (IPv6)
+  kan tonen.
+- `SnifferThread._verwerk_frame()`: nieuwe tak voor
+  `ethertype == IPV6_ETHERTYPE` die `pkt[IPv6]` decodeert naar dezelfde
+  `ip_info`-structuur als de verzendkant.
+- `_verstuur_frame()`: IPv6 toegevoegd aan de functioneel
+  geïmplementeerde protocollen, met validatie op een ingevulde
+  Destination IPv6.
+- Teksten bijgewerkt (`modus_uitleg`-label, module-docstring,
+  sniff-waarschuwing) die eerder nog zeiden dat IPv6 "nog niet
+  functioneel" was.
+- Getest offscreen (`QT_QPA_PLATFORM=offscreen`, PyQt6 + Scapy
+  tijdelijk geïnstalleerd op de ontwikkelmachine): frame bouwen en
+  decoderen gaf consistente resultaten, modus-wisseling toonde/verborg
+  de juiste subvelden (inclusief regressietest dat ARP en Ethernet nog
+  gewoon werkten), en de visualisatie rendert zonder crash met de
+  nieuwe IPv6-velden.
+- README.md bijgewerkt: nieuwe bullet "IPv6 opbouwen", de
+  ontvangst-bullet uitgebreid naar ARP/IPv4/IPv6, en de eerdere
+  "IPv6 is nog niet functioneel"-tekst verwijderd.
+
+## 25. Volledige applicatie-analyse met verbetervoorstellen
+
+**Verzoek:** Analyseer de volledige applicatie en kom met
+verbetervoorstellen.
+
+**Resultaat:** 7 parallelle review-agents (correctheid × 2 invalshoeken,
+cross-functie-afhankelijkheden, invarianten, hergebruik, simplificatie,
+efficiëntie, architectuur) doorzochten het hele bestand, aangevuld met
+een eigen analyse van UX/pedagogische geschiktheid, security en
+documentatie. Belangrijkste vondst: het typen van een onvolledig
+IP-adres (bijv. "192.") in Mode-C/D liet Scapy's `IP()`/`IPv6()`-laag
+een blokkerende DNS-hostnaam-resolutie proberen — empirisch gemeten op
+7,2 seconden bevriezing van de hele GUI per zo'n toetsaanslag, iets wat
+elke normale manier van typen onvermijdelijk raakt.
+
+**Direct gefixed:**
+- Nieuwe `is_geldig_ipv4()`/`effectief_ipv4()` (en later ook
+  `is_geldig_ipv6()`/`effectief_ipv6()`) helpers op basis van de
+  stdlib `ipaddress`-module (geen netwerkverkeer) valideren IP-tekst
+  lokaal vóórdat Scapy ernaar kijkt — zowel in de live-visualisatie als
+  vóór het daadwerkelijk verzenden.
+- `bouw_payload_bytes()` kapt nu af op 65535 bytes i.p.v. een
+  onafgevangen `struct.error`.
+- Nieuwe gedeelde `bouw_ethernet_data_bytes()`: het daadwerkelijk
+  verzonden gewone-Ethernet-frame past nu dezelfde padding toe als de
+  live visualisatie (voorheen liet de verzendkant dit aan de OS/driver
+  over).
+- `_stop_sniffer()` joint nu de achtergrondthread i.p.v. de referentie
+  direct los te laten (voorkwam een race bij snel stoppen/wisselen/
+  herstarten van de sniffer).
+- Ontvangstvisualisatie reset nu altijd naar de lege staat bij het
+  wisselen van sniff-EtherType (voorheen alleen als de geschiedenis
+  leeg was).
+- ARP-geforceerde velden (broadcast-MAC, pseudo-ARP-zin) worden nu
+  gewist zodra ARP-modus verlaten wordt, i.p.v. stil te blijven staan.
+- Overbodige dubbele visualisatie-herberekening per toetsaanslag in het
+  ARP-IP-veld verwijderd.
+
+**Voorgesteld maar bewust niet zelf doorgevoerd** (grotere
+ontwerpkeuzes, aan de gebruiker om te beslissen): een ARP-antwoord
+gebruikt altijd `pdst=0.0.0.0` i.p.v. het echte IP van de aanvrager;
+protocolondersteuning staat als losse if/elif-ketens door 6+ methoden
+verspreid i.p.v. één protocol-handler-registry; diverse duplicatie
+(subpaneel-opbouw, combobox-vulling, box-tekencode) die met gedeelde
+helpers verder opgeschoond kan worden.
+
+**Complicatie:** tijdens dit werk bleek er buiten deze sessie om al een
+nieuwe commit gepusht — een parallelle sessie had Mode-D/IPv6 afgebouwd
+volgens precies het patroon dat hierboven als architecturaal kwetsbaar
+was aangemerkt. De twee lijnen zijn samengevoegd via een git merge; de
+DNS-hang-fix is daarbij consistent doorgetrokken naar de nieuwe
+IPv6-velden (die dezelfde kwetsbaarheid hadden), en alle eerdere fixes
+zijn opnieuw geregressietest samen met de IPv6-functionaliteit.
+
 ---
 
 *Elke stap hierboven is telkens gevolgd door een syntax-check
