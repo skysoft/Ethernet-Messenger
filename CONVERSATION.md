@@ -434,6 +434,36 @@ verschil met de Linux-versie (installatie, Npcap, Administrator-rechten,
 een lab-scenario voor twee Windows-laptops); de hoofd-README verwijst
 er bovenaan naar.
 
+## 27. Installatiescript voor Windows-studentlaptops
+
+**Verzoek:** Maak een installatiescript dat alle noodzakelijke
+afhankelijkheden voor een student installeert, uitgaande van een
+Windows 11-laptop.
+
+**Resultaat:** Nieuw `installeer_windows.ps1` (PowerShell), dat:
+- zichzelf herstart als Administrator indien nodig (vereist voor Npcap);
+- Python 3 installeert via `winget` (`Python.Python.3.12`) als het nog
+  niet aanwezig is;
+- Npcap installeert — met een belangrijke kanttekening: de **gratis**
+  Npcap-installer ondersteunt géén silent/unattended install (`/S` is
+  exclusief voor de betaalde Npcap OEM-licentie, geverifieerd via de
+  officiële Npcap-documentatie). Er bestaat ook geen betrouwbaar
+  actueel `winget`-pakket voor Npcap. Het script downloadt daarom de
+  officiële installer (`npcap.com/dist/npcap-1.88.exe`) en start die
+  interactief; de student doorloopt zelf de wizard (standaardopties);
+- PyQt6 en Scapy installeert via `pip install PyQt6 scapy`;
+- optioneel Wireshark installeert via `winget`
+  (`WiresharkFoundation.Wireshark`) — interactief gevraagd, of via de
+  parameters `-MetWireshark`/`-ZonderWireshark` voor niet-interactief
+  gebruik (bijv. bij klassikale uitrol door de docent);
+- elke stap overslaat als de betreffende dependency al aanwezig is
+  (idempotent, veilig opnieuw te draaien).
+
+Alle winget-package-ID's zijn vooraf opgezocht en geverifieerd in plaats
+van geraden. `README_windows.md` is bijgewerkt met een "Optie A"
+(installatiescript) naast de bestaande handmatige installatie-instructies
+("Optie B").
+
 ---
 
 *Elke stap hierboven is telkens gevolgd door een syntax-check

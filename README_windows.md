@@ -62,7 +62,28 @@ logica, protocolvalidatie) is exact hetzelfde als de Linux-versie.
 
 ## Installatie
 
-Open een Opdrachtprompt of PowerShell in de map met dit project:
+### Optie A: automatisch installatiescript (aanbevolen)
+
+Dit project bevat [`installeer_windows.ps1`](installeer_windows.ps1), dat
+Python 3, Npcap, PyQt6 en Scapy voor je installeert (en optioneel
+Wireshark). Open PowerShell in de map met dit project en voer uit:
+
+```bash
+powershell -ExecutionPolicy Bypass -File .\installeer_windows.ps1
+```
+
+Het script vraagt zelf om Administrator-rechten (nodig voor Npcap). Let op:
+de **gratis** Npcap-installer ondersteunt geen volledig automatische
+(silent) installatie — het script downloadt de officiele installer en opent
+die voor je; doorloop de wizard met de standaardopties (een paar keer
+"Next"/"I Agree"/"Install"). De rest (Python, PyQt6, Scapy, optioneel
+Wireshark) verloopt volledig automatisch via `winget`/`pip`.
+
+### Optie B: handmatig
+
+Zorg eerst zelf voor Python 3 (zie Vereisten) en Npcap
+([npcap.com/#download](https://npcap.com/#download), standaardopties).
+Open daarna een Opdrachtprompt of PowerShell in de map met dit project:
 
 ```bash
 pip install PyQt6 scapy
