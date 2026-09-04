@@ -13,6 +13,13 @@ zien hoe Ethernet framing, MAC-adressering en EtherType werken.
 > verstoren en is op de meeste netwerken zonder toestemming niet
 > toegestaan.
 
+> ℹ️ Er is ook een **Windows-versie** (`ethernet_messenger_windows.py`),
+> bedoeld als aanvulling op deze Linux/Debian-versie voor gebruik op de
+> laptops van studenten — zie [`README_windows.md`](README_windows.md).
+> De functionaliteit is identiek; alleen interface-detectie,
+> rechten-check (Administrator i.p.v. root) en de Wireshark-integratie
+> zijn Windows-specifiek.
+
 ## Functionaliteit
 
 - Overzichtelijke indeling in twee tabbladen, **Verzenden** en

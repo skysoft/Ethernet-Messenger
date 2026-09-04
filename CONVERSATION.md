@@ -392,6 +392,48 @@ DNS-hang-fix is daarbij consistent doorgetrokken naar de nieuwe
 IPv6-velden (die dezelfde kwetsbaarheid hadden), en alle eerdere fixes
 zijn opnieuw geregressietest samen met de IPv6-functionaliteit.
 
+## 26. Windows-versie als aanvulling op de Linux-versie
+
+**Verzoek:** Maak op basis van alles wat er al is een Microsoft
+Windows-versie van de Ethernet Messenger, als aanvulling voor gebruik op
+de laptops van studenten — niet ter vervanging van de Linux-versie.
+
+**Resultaat:** Nieuw, apart bestand `ethernet_messenger_windows.py`
+(Linux-bestand blijft ongewijzigd), met alleen de platform-specifieke
+onderdelen aangepast:
+- Interface-detectie (loopback/fysiek herkennen) herschreven zonder
+  `/sys/class/net` (bestaat niet op Windows): trefwoord-heuristiek op de
+  Windows-adapterbeschrijving (bijv. "Virtual", "VPN", "Hyper-V", "WAN
+  Miniport" = niet-fysiek).
+- Rechten-check: Administrator (`ctypes.windll.shell32.IsUserAnAdmin()`)
+  i.p.v. root/sudo/setcap, met bijpassende Nederlandstalige instructies.
+- Wireshark-integratie zoekt `wireshark.exe` op de gebruikelijke
+  Windows-installatielocatie i.p.v. aan te nemen dat het op PATH staat.
+- Alle overige logica (protocol-opbouw, visualisatie, sniffer) is
+  ongewijzigd overgenomen.
+
+**Bijvangst tijdens het testen** (deze hele sessie draait toevallig al
+op een Windows-machine met Npcap, dus dit was voor het eerst écht op
+Windows te verifiëren i.p.v. alleen offscreen): `conf.ifaces.dev_from_name()`
+bleek structureel te falen voor Windows' `\Device\NPF_{GUID}`-paden (een
+`ValueError` ondanks dat de key wel degelijk in `conf.ifaces` bestaat).
+Opgelost door overal `conf.ifaces.get(iface_name)` (directe
+dictionary-toegang) te gebruiken — hiermee tonen interfaces nu hun
+echte Windows-verbindingsnaam (bijv. "Ethernet") in plaats van de ruwe
+apparaatpad-string. Dit is mogelijk ook relevant voor de Linux-versie,
+maar dat kon niet worden geverifieerd op een echte Linux-machine binnen
+deze sessie, en is dus niet aangepast.
+
+Geverifieerd offscreen mét échte Windows-interfaces (Intel-Ethernet,
+2x VMware-adapters, 3x WAN Miniport, Npcap-loopback): loopback wordt
+correct uitgesloten, virtuele adapters correct niet als standaard
+gekozen, de echte Ethernet-adapter correct wél; volledige ARP/IPv6-flow
+end-to-end getest inclusief de DNS-hang-fix (bevestigd ook op Windows
+niet meer optredend). Nieuw `README_windows.md` beschrijft alleen het
+verschil met de Linux-versie (installatie, Npcap, Administrator-rechten,
+een lab-scenario voor twee Windows-laptops); de hoofd-README verwijst
+er bovenaan naar.
+
 ---
 
 *Elke stap hierboven is telkens gevolgd door een syntax-check
