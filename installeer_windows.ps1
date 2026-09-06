@@ -43,6 +43,35 @@ function Vernieuw-PadOmgevingsvariabele {
     $env:Path = "$machinePad;$gebruikerPad"
 }
 
+# Windows plaatst standaard een "App execution alias"-stub voor python.exe
+# op het PAD die, als Python niet echt geinstalleerd is, alleen een
+# doorverwijzing naar de Microsoft Store toont in plaats van een fout te
+# geven. Get-Command vindt die stub dus altijd, ook zonder echte Python-
+# installatie — en met $ErrorActionPreference "Stop" wordt de stderr-tekst
+# van die stub een afbrekende fout in plaats van gewoon een niet-nul
+# exitcode. Daarom hier een aparte, robuuste check die de echte output leest.
+function Test-PythonGeinstalleerd {
+    try {
+        $output = & py -3 --version 2>&1
+        if ($LASTEXITCODE -eq 0 -and "$output" -match '^Python \d') { return $true }
+    } catch { }
+    try {
+        $output = & python --version 2>&1
+        if ($LASTEXITCODE -eq 0 -and "$output" -match '^Python \d') { return $true }
+    } catch { }
+    return $false
+}
+
+# Gebruikt bij voorkeur de 'py'-launcher, want die is niet gevoelig voor
+# de App-execution-alias-valkuil hierboven.
+function Voer-Python([string[]]$pythonArgs) {
+    try {
+        & py -3 @pythonArgs
+        return
+    } catch { }
+    & python @pythonArgs
+}
+
 # --- Zichzelf verhogen naar Administrator indien nodig ---
 # Npcap-installatie en het draaien van Ethernet Messenger zelf vereisen
 # Administrator-rechten, dus vraagt dit script dat meteen op zodat de rest
@@ -77,20 +106,20 @@ Schrijf-Ok "winget is beschikbaar."
 
 # --- Python 3 ---
 Schrijf-Stap "Controleren of Python 3 is geinstalleerd..."
-$pythonAanwezig = Get-Command python -ErrorAction SilentlyContinue
-if ($pythonAanwezig) {
-    $pythonVersie = & python --version 2>&1
-    Schrijf-Ok "Python is al geinstalleerd ($pythonVersie)."
+if (Test-PythonGeinstalleerd) {
+    Schrijf-Ok "Python is al geinstalleerd."
 } else {
     Schrijf-Stap "Python 3 wordt geinstalleerd via winget..."
     winget install --id Python.Python.3.12 -e --silent --accept-package-agreements --accept-source-agreements
     Vernieuw-PadOmgevingsvariabele
-    $pythonAanwezig = Get-Command python -ErrorAction SilentlyContinue
-    if ($pythonAanwezig) {
+    if (Test-PythonGeinstalleerd) {
         Schrijf-Ok "Python is geinstalleerd."
     } else {
-        Schrijf-Waarschuwing "Python-installatie afgerond, maar 'python' is nog niet gevonden in dit venster."
+        Schrijf-Waarschuwing "Python-installatie afgerond, maar nog niet bruikbaar in dit venster."
         Schrijf-Waarschuwing "Sluit dit PowerShell-venster en start het script opnieuw."
+        Schrijf-Waarschuwing "Zie je de melding 'Python was not found... App execution aliases'? Schakel"
+        Schrijf-Waarschuwing "dan de aliassen voor python.exe/python3.exe uit via Instellingen > Apps >"
+        Schrijf-Waarschuwing "Geavanceerde app-instellingen > App-uitvoeraliassen."
         exit 1
     }
 }
@@ -129,8 +158,8 @@ if ($npcapAanwezig) {
 
 # --- PyQt6 en Scapy ---
 Schrijf-Stap "PyQt6 en Scapy installeren via pip..."
-& python -m pip install --upgrade pip
-& python -m pip install PyQt6 scapy
+Voer-Python @("-m", "pip", "install", "--upgrade", "pip")
+Voer-Python @("-m", "pip", "install", "PyQt6", "scapy")
 if ($LASTEXITCODE -ne 0) {
     Schrijf-Fout "Installeren van PyQt6/Scapy via pip is mislukt (zie foutmelding hierboven)."
     exit 1
