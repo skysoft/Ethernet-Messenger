@@ -516,6 +516,13 @@ overbodig geworden nu studenten via `installeer_student.bat` een
 bureaubladsnelkoppeling krijgen die de applicatie direct als
 Administrator start.
 
+**Vereenvoudiging 3:** de afsluitende `Read-Host "Druk op Enter om dit
+venster te sluiten"` is ook verwijderd. Die liet `installeer_student.bat`
+onnodig wachten op een druk op Enter na afloop van
+`installeer_windows.ps1`, terwijl het batchbestand daarna zelf nog
+stappen 2 en 3 (app downloaden, snelkoppeling maken) moet uitvoeren —
+het script loopt nu vanzelf door.
+
 ---
 
 *Elke stap hierboven is telkens gevolgd door een syntax-check

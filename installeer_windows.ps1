@@ -176,4 +176,3 @@ Write-Host "=================================================================" -
 Write-Host ""
 Write-Host "Zie README_windows.md voor meer uitleg."
 Write-Host ""
-Read-Host "Druk op Enter om dit venster te sluiten"
