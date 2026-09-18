@@ -62,11 +62,31 @@ logica, protocolvalidatie) is exact hetzelfde als de Linux-versie.
 
 ## Installatie
 
-### Optie A: automatisch installatiescript (aanbevolen)
+### Optie A: één bestand downloaden, verder alles automatisch (aanbevolen)
 
-Dit project bevat [`installeer_windows.ps1`](installeer_windows.ps1), dat
-Python 3, Npcap, PyQt6 en Scapy voor je installeert (en optioneel
-Wireshark). Open PowerShell in de map met dit project en voer uit:
+Voor een studentlaptop waar nog niets op staat volstaat één bestand:
+[`installeer_student.bat`](installeer_student.bat). Download alleen dit
+bestand (bijv. naar Downloads) en start het met rechtermuisklik ->
+**"Als administrator uitvoeren"**.
+
+Het regelt alles zelf, in deze volgorde:
+1. maakt de map `%USERPROFILE%\EthernetMessenger` aan;
+2. haalt [`installeer_windows.ps1`](installeer_windows.ps1) van GitHub op
+   en voert het uit (zie Optie B hieronder voor wat dat doet);
+3. haalt `ethernet_messenger_windows.py` van GitHub op en plaatst het in
+   die map;
+4. zet een snelkoppeling **"Ethernet Messenger"** op het bureaublad die
+   automatisch als Administrator start.
+
+Na afloop is de student klaar: gewoon dubbelklikken op de snelkoppeling.
+
+### Optie B: installatiescript (project is al gedownload)
+
+Heb je dit project al lokaal staan (bijv. via `git clone` of een zip)? Dan
+kun je ook alleen [`installeer_windows.ps1`](installeer_windows.ps1)
+draaien, dat Python 3, Npcap, PyQt6 en Scapy voor je installeert (en
+optioneel Wireshark) — maar zonder de map/snelkoppeling-stappen van Optie
+A. Open PowerShell in de map met dit project en voer uit:
 
 ```bash
 powershell -ExecutionPolicy Bypass -File .\installeer_windows.ps1
@@ -79,7 +99,7 @@ die voor je; doorloop de wizard met de standaardopties (een paar keer
 "Next"/"I Agree"/"Install"). De rest (Python, PyQt6, Scapy, optioneel
 Wireshark) verloopt volledig automatisch via `winget`/`pip`.
 
-### Optie B: handmatig
+### Optie C: handmatig
 
 Zorg eerst zelf voor Python 3 (zie Vereisten) en Npcap
 ([npcap.com/#download](https://npcap.com/#download), standaardopties).

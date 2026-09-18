@@ -464,6 +464,48 @@ van geraden. `README_windows.md` is bijgewerkt met een "Optie A"
 (installatiescript) naast de bestaande handmatige installatie-instructies
 ("Optie B").
 
+**Praktijkfix:** bij het eerste echte gebruik door een student (nog geen
+Python geinstalleerd) bleek `Get-Command python` altijd de Windows
+"App execution alias"-stub voor `python.exe` te vinden (die zonder een
+echte installatie alleen naar de Microsoft Store verwijst), waardoor het
+script dacht dat Python al aanwezig was en de installatiestap oversloeg.
+De foutmelding van die stub werd vervolgens door `$ErrorActionPreference
+"Stop"` een afbrekende fout in plaats van een gewone niet-nul exitcode,
+waardoor het script crashte. Opgelost met een aparte controlefunctie die
+de echte `"Python 3.x"`-uitvoer valideert (met try/catch) en die bij
+voorkeur de `py`-launcher gebruikt, die niet gevoelig is voor deze alias.
+
+## 28. Eén-bestand installatie voor studenten (.bat + snelkoppeling)
+
+**Verzoek:** Maak een batchbestand dat een student als Administrator kan
+starten, dat een map aanmaakt voor Ethernet Messenger, het
+installatiescript van GitHub haalt en in PowerShell uitvoert, daarna een
+kopie van Ethernet Messenger in de map plaatst, en een snelkoppeling op
+het bureaublad zet.
+
+**Resultaat:** Twee nieuwe bestanden:
+- `installeer_student.bat` — het enige bestand dat een student handmatig
+  hoeft te downloaden. Herstart zichzelf als Administrator (via
+  `Start-Process -Verb RunAs`), maakt `%USERPROFILE%\EthernetMessenger`
+  aan, haalt daarna `installeer_windows.ps1` en
+  `ethernet_messenger_windows.py` rechtstreeks van GitHub
+  (`raw.githubusercontent.com`) op, voert het installatiescript uit, en
+  roept tot slot `maak_snelkoppeling.ps1` aan.
+- `maak_snelkoppeling.ps1` — maakt de bureaubladsnelkoppeling. Zoekt het
+  echte pad van `python.exe` op (via de `py`-launcher, met PATH eerst
+  ververst vanuit het register omdat Python mogelijk zojuist door de
+  vorige stap is geinstalleerd) en zet die als doel van de snelkoppeling.
+  Belangrijk detail: de snelkoppeling moet altijd als Administrator
+  starten (nodig voor Npcap/raw sockets), maar die instelling zit niet in
+  de WScript.Shell COM-API — het is één bit in het `.lnk`-bestand zelf
+  (byte offset `0x15`, bit `0x20`). Dit is geverifieerd door een test-
+  snelkoppeling te maken, het byte te inspecteren, en te bevestigen dat
+  Windows dezelfde bit zet als je het vinkje handmatig aanzet.
+
+`README_windows.md` is bijgewerkt: de vroegere "Optie A" heet nu "Optie
+B" (project al lokaal aanwezig), en de nieuwe eén-bestand-route is
+"Optie A" geworden (aanbevolen voor een verse studentlaptop).
+
 ---
 
 *Elke stap hierboven is telkens gevolgd door een syntax-check
