@@ -452,10 +452,8 @@ Windows 11-laptop.
   officiële installer (`npcap.com/dist/npcap-1.88.exe`) en start die
   interactief; de student doorloopt zelf de wizard (standaardopties);
 - PyQt6 en Scapy installeert via `pip install PyQt6 scapy`;
-- optioneel Wireshark installeert via `winget`
-  (`WiresharkFoundation.Wireshark`) — interactief gevraagd, of via de
-  parameters `-MetWireshark`/`-ZonderWireshark` voor niet-interactief
-  gebruik (bijv. bij klassikale uitrol door de docent);
+- Wireshark installeert via `winget`
+  (`WiresharkFoundation.Wireshark`);
 - elke stap overslaat als de betreffende dependency al aanwezig is
   (idempotent, veilig opnieuw te draaien).
 
@@ -505,6 +503,12 @@ het bureaublad zet.
 `README_windows.md` is bijgewerkt: de vroegere "Optie A" heet nu "Optie
 B" (project al lokaal aanwezig), en de nieuwe eén-bestand-route is
 "Optie A" geworden (aanbevolen voor een verse studentlaptop).
+
+**Vereenvoudiging:** de interactieve vraag "Wireshark installeren? (j/N)"
+en de bijbehorende `-MetWireshark`/`-ZonderWireshark`-parameters zijn
+verwijderd uit `installeer_windows.ps1`. Wireshark wordt nu, net als
+Python en PyQt6/Scapy, altijd automatisch geinstalleerd als het nog niet
+aanwezig is — geen vraag meer, geen niet-interactieve vlag meer nodig.
 
 ---
 

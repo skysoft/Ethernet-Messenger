@@ -2,21 +2,12 @@
 <#
     installeer_windows.ps1
     Installeert alle afhankelijkheden voor Ethernet Messenger (Windows-versie)
-    op een Windows 10/11-laptop: Python 3, Npcap, PyQt6 + Scapy, en optioneel
+    op een Windows 10/11-laptop: Python 3, Npcap, PyQt6 + Scapy, en
     Wireshark.
 
     Gebruik (in PowerShell):
         powershell -ExecutionPolicy Bypass -File .\installeer_windows.ps1
-
-    Parameters:
-        -MetWireshark      installeer Wireshark zonder ernaar te vragen
-        -ZonderWireshark   sla Wireshark over zonder ernaar te vragen
 #>
-
-param(
-    [switch]$MetWireshark,
-    [switch]$ZonderWireshark
-)
 
 $ErrorActionPreference = "Stop"
 
@@ -83,8 +74,6 @@ if (-not $isAdmin) {
     Write-Host "Dit installatiescript heeft Administrator-rechten nodig. Opnieuw starten als Administrator..." -ForegroundColor Yellow
     $scriptPad = $MyInvocation.MyCommand.Path
     $args = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$scriptPad`"")
-    if ($MetWireshark) { $args += "-MetWireshark" }
-    if ($ZonderWireshark) { $args += "-ZonderWireshark" }
     Start-Process -FilePath "powershell.exe" -ArgumentList $args -Verb RunAs
     exit
 }
@@ -166,7 +155,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 Schrijf-Ok "PyQt6 en Scapy zijn geinstalleerd."
 
-# --- Wireshark (optioneel) ---
+# --- Wireshark ---
 Schrijf-Stap "Controleren of Wireshark is geinstalleerd..."
 $wiresharkAanwezig = (Get-Command wireshark -ErrorAction SilentlyContinue) `
     -or (Test-Path "$env:ProgramFiles\Wireshark\wireshark.exe") `
@@ -174,21 +163,10 @@ $wiresharkAanwezig = (Get-Command wireshark -ErrorAction SilentlyContinue) `
 
 if ($wiresharkAanwezig) {
     Schrijf-Ok "Wireshark is al geinstalleerd."
-} elseif ($ZonderWireshark) {
-    Schrijf-Waarschuwing "Wireshark wordt overgeslagen (parameter -ZonderWireshark)."
-} elseif ($MetWireshark) {
+} else {
     Schrijf-Stap "Wireshark wordt geinstalleerd via winget..."
     winget install --id WiresharkFoundation.Wireshark -e --silent --accept-package-agreements --accept-source-agreements
     Schrijf-Ok "Wireshark is geinstalleerd."
-} else {
-    $antwoord = Read-Host "Wireshark installeren? Optioneel, alleen nodig voor de knop 'Open in Wireshark'. (j/N)"
-    if ($antwoord -match '^[jJ]') {
-        Schrijf-Stap "Wireshark wordt geinstalleerd via winget..."
-        winget install --id WiresharkFoundation.Wireshark -e --silent --accept-package-agreements --accept-source-agreements
-        Schrijf-Ok "Wireshark is geinstalleerd."
-    } else {
-        Schrijf-Ok "Wireshark wordt overgeslagen."
-    }
 }
 
 Write-Host ""

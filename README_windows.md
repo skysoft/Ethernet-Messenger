@@ -84,9 +84,9 @@ Na afloop is de student klaar: gewoon dubbelklikken op de snelkoppeling.
 
 Heb je dit project al lokaal staan (bijv. via `git clone` of een zip)? Dan
 kun je ook alleen [`installeer_windows.ps1`](installeer_windows.ps1)
-draaien, dat Python 3, Npcap, PyQt6 en Scapy voor je installeert (en
-optioneel Wireshark) — maar zonder de map/snelkoppeling-stappen van Optie
-A. Open PowerShell in de map met dit project en voer uit:
+draaien, dat Python 3, Npcap, PyQt6, Scapy en Wireshark voor je
+installeert — maar zonder de map/snelkoppeling-stappen van Optie A. Open
+PowerShell in de map met dit project en voer uit:
 
 ```bash
 powershell -ExecutionPolicy Bypass -File .\installeer_windows.ps1
@@ -96,8 +96,8 @@ Het script vraagt zelf om Administrator-rechten (nodig voor Npcap). Let op:
 de **gratis** Npcap-installer ondersteunt geen volledig automatische
 (silent) installatie — het script downloadt de officiele installer en opent
 die voor je; doorloop de wizard met de standaardopties (een paar keer
-"Next"/"I Agree"/"Install"). De rest (Python, PyQt6, Scapy, optioneel
-Wireshark) verloopt volledig automatisch via `winget`/`pip`.
+"Next"/"I Agree"/"Install"). De rest (Python, PyQt6, Scapy, Wireshark)
+verloopt volledig automatisch via `winget`/`pip`.
 
 ### Optie C: handmatig
 
