@@ -510,6 +510,12 @@ verwijderd uit `installeer_windows.ps1`. Wireshark wordt nu, net als
 Python en PyQt6/Scapy, altijd automatisch geinstalleerd als het nog niet
 aanwezig is — geen vraag meer, geen niet-interactieve vlag meer nodig.
 
+**Vereenvoudiging 2:** de afsluitende "Start Ethernet Messenger als
+volgt: ..."-instructie is uit `installeer_windows.ps1` verwijderd. Die was
+overbodig geworden nu studenten via `installeer_student.bat` een
+bureaubladsnelkoppeling krijgen die de applicatie direct als
+Administrator start.
+
 ---
 
 *Elke stap hierboven is telkens gevolgd door een syntax-check

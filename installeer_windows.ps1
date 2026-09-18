@@ -174,12 +174,6 @@ Write-Host "=================================================================" -
 Write-Host " Installatie voltooid " -ForegroundColor Cyan
 Write-Host "=================================================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "Start Ethernet Messenger als volgt:"
-Write-Host "  1. Open een NIEUW PowerShell- of Opdrachtprompt-venster ALS ADMINISTRATOR"
-Write-Host "     (rechtermuisknop op het programma -> 'Als administrator uitvoeren')."
-Write-Host "  2. Navigeer naar de map met dit project."
-Write-Host "  3. Voer uit: python ethernet_messenger_windows.py"
-Write-Host ""
 Write-Host "Zie README_windows.md voor meer uitleg."
 Write-Host ""
 Read-Host "Druk op Enter om dit venster te sluiten"
